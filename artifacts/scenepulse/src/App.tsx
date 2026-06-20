@@ -16,12 +16,10 @@ import Signup from "@/pages/Signup";
 import Dashboard from "@/pages/Dashboard";
 import Onboarding from "@/pages/Onboarding";
 import AuthCallback from "@/pages/AuthCallback";
-import Artists from "@/pages/Artists";
 import ArtistDetail from "@/pages/ArtistDetail";
 import Discover from "@/pages/Discover";
 import Venues from "@/pages/Venues";
 import VenueDetail from "@/pages/VenueDetail";
-import Events from "@/pages/Events";
 import EventDetail from "@/pages/EventDetail";
 import Settings from "@/pages/Settings";
 
@@ -57,13 +55,11 @@ function Router() {
         <Route path="/settings"><ProtectedRoute component={Settings} /></Route>
         
         <Route path="/discover" component={Discover} />
-        <Route path="/artists" component={Artists} />
         <Route path="/artists/:id" component={ArtistDetail} />
-        
+
         <Route path="/venues" component={Venues} />
         <Route path="/venues/:id" component={VenueDetail} />
-        
-        <Route path="/events" component={Events} />
+
         <Route path="/events/:id" component={EventDetail} />
         
         <Route component={NotFound} />

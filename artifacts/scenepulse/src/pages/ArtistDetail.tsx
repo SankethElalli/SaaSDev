@@ -3,11 +3,9 @@ import {
   getGetArtistProfileQueryKey,
 } from "@workspace/api-client-react";
 import { Link, useParams } from "wouter";
-import { Button } from "@/components/ui/button";
 import { ArtistActions } from "@/components/artist/ArtistActions";
 import { SongstatsPanel } from "@/components/artist/SongstatsPanel";
 import {
-  ArrowLeft,
   CheckCircle2,
   MapPin,
   Instagram,
@@ -54,12 +52,6 @@ export default function ArtistDetail() {
 
   return (
     <div className="container mx-auto px-4 py-8 max-w-5xl">
-      <Button variant="ghost" size="sm" asChild className="mb-6 -ml-3">
-        <Link href="/artists">
-          <ArrowLeft className="w-4 h-4 mr-2" /> Back to Artists
-        </Link>
-      </Button>
-
       <div className="glass-card rounded-3xl overflow-hidden mb-8">
         <div className="h-48 md:h-64 bg-muted relative w-full">
           {artist.imageUrl ? (
@@ -254,6 +246,16 @@ export default function ArtistDetail() {
                       alt={m.caption ?? "Artist media"}
                       className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                       data-testid="media-image"
+                      onError={(e) => {
+                        (e.currentTarget as HTMLImageElement).style.display = "none";
+                        const parent = e.currentTarget.parentElement;
+                        if (parent && !parent.querySelector(".img-error")) {
+                          const el = document.createElement("div");
+                          el.className = "img-error w-full h-full flex items-center justify-center text-muted-foreground text-xs";
+                          el.textContent = "Image unavailable";
+                          parent.appendChild(el);
+                        }
+                      }}
                     />
                   )}
                 </div>

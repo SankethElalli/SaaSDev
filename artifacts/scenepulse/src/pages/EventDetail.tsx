@@ -8,7 +8,7 @@ import {
 } from "@workspace/api-client-react";
 import { Link, useParams } from "wouter";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, Calendar, MapPin, Ticket } from "lucide-react";
+import { Calendar, MapPin, Ticket } from "lucide-react";
 
 export default function EventDetail() {
   const params = useParams();
@@ -47,12 +47,6 @@ export default function EventDetail() {
 
   return (
     <div className="container mx-auto px-4 py-6 sm:py-8 max-w-5xl">
-      <Button variant="ghost" size="sm" asChild className="mb-4 sm:mb-6 -ml-3">
-        <Link href="/events">
-          <ArrowLeft className="w-4 h-4 mr-2" /> Back to Events
-        </Link>
-      </Button>
-
       <div className="glass-card rounded-3xl overflow-hidden mb-8 sm:mb-12">
         <div className="h-52 sm:h-64 md:h-96 bg-muted relative w-full">
           {event.imageUrl ? (
