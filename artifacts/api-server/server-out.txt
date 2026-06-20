@@ -1,0 +1,122 @@
+[01:28:04.819] [32mINFO[39m (175280): [36mServer listening[39m
+    [35mport[39m: 8080
+[01:28:31.588] [32mINFO[39m (175280): [36mrequest completed[39m
+    [35mreq[39m: {
+      "id": 1,
+      "method": "GET",
+      "url": "/api/map/pins"
+    }
+    [35mres[39m: {
+      "statusCode": 304
+    }
+    [35mresponseTime[39m: 730
+[01:28:31.661] [32mINFO[39m (175280): [36mrequest completed[39m
+    [35mreq[39m: {
+      "id": 3,
+      "method": "GET",
+      "url": "/api/profiles/5c7e6204-8ba0-41de-aa95-c9309439d62e/artist"
+    }
+    [35mres[39m: {
+      "statusCode": 304
+    }
+    [35mresponseTime[39m: 444
+[01:28:31.667] [32mINFO[39m (175280): [36mrequest completed[39m
+    [35mreq[39m: {
+      "id": 2,
+      "method": "GET",
+      "url": "/api/profiles/5c7e6204-8ba0-41de-aa95-c9309439d62e"
+    }
+    [35mres[39m: {
+      "statusCode": 304
+    }
+    [35mresponseTime[39m: 454
+[01:28:33.588] [32mINFO[39m (175280): [36mrequest completed[39m
+    [35mreq[39m: {
+      "id": 4,
+      "method": "GET",
+      "url": "/api/map/pins"
+    }
+    [35mres[39m: {
+      "statusCode": 200
+    }
+    [35mresponseTime[39m: 72
+[01:28:33.924] [32mINFO[39m (175280): [36mrequest completed[39m
+    [35mreq[39m: {
+      "id": 5,
+      "method": "GET",
+      "url": "/api/profiles/5c7e6204-8ba0-41de-aa95-c9309439d62e"
+    }
+    [35mres[39m: {
+      "statusCode": 200
+    }
+    [35mresponseTime[39m: 57
+[01:28:34.267] [32mINFO[39m (175280): [36mrequest completed[39m
+    [35mreq[39m: {
+      "id": 6,
+      "method": "GET",
+      "url": "/api/profiles/5c7e6204-8ba0-41de-aa95-c9309439d62e/artist"
+    }
+    [35mres[39m: {
+      "statusCode": 200
+    }
+    [35mresponseTime[39m: 82
+[01:28:35.279] [32mINFO[39m (175280): [36mrequest completed[39m
+    [35mreq[39m: {
+      "id": 7,
+      "method": "GET",
+      "url": "/api/jambase/events"
+    }
+    [35mres[39m: {
+      "statusCode": 200
+    }
+    [35mresponseTime[39m: 773
+[01:28:44.683] [32mINFO[39m (175280): [36mrequest completed[39m
+    [35mreq[39m: {
+      "id": 8,
+      "method": "GET",
+      "url": "/api/musixmatch/fingerprint"
+    }
+    [35mres[39m: {
+      "statusCode": 200
+    }
+    [35mresponseTime[39m: 1220
+[01:29:06.886] [32mINFO[39m (175280): [36mrequest completed[39m
+    [35mreq[39m: {
+      "id": 9,
+      "method": "GET",
+      "url": "/api/map/pins"
+    }
+    [35mres[39m: {
+      "statusCode": 304
+    }
+    [35mresponseTime[39m: 490
+[01:29:06.959] [32mINFO[39m (175280): [36mrequest completed[39m
+    [35mreq[39m: {
+      "id": 10,
+      "method": "GET",
+      "url": "/api/profiles/5c7e6204-8ba0-41de-aa95-c9309439d62e"
+    }
+    [35mres[39m: {
+      "statusCode": 304
+    }
+    [35mresponseTime[39m: 463
+[01:29:07.096] [32mINFO[39m (175280): [36mrequest completed[39m
+    [35mreq[39m: {
+      "id": 11,
+      "method": "GET",
+      "url": "/api/profiles/5c7e6204-8ba0-41de-aa95-c9309439d62e/artist"
+    }
+    [35mres[39m: {
+      "statusCode": 304
+    }
+    [35mresponseTime[39m: 68
+[01:29:07.880] [32mINFO[39m (175280): [36mrequest completed[39m
+    [35mreq[39m: {
+      "id": 12,
+      "method": "GET",
+      "url": "/api/jambase/events"
+    }
+    [35mres[39m: {
+      "statusCode": 304
+    }
+    [35mresponseTime[39m: 661

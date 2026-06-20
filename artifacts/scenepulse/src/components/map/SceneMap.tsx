@@ -3,7 +3,6 @@ import {
   TileLayer,
   Marker,
   Popup,
-  CircleMarker,
   useMap,
   useMapEvents,
 } from "react-leaflet";
@@ -169,9 +168,9 @@ function buildIcon(pin: ScenePin | JambasePin) {
     : "";
 
   const html = `
-    <div style="position:relative;width:46px;height:56px;filter:drop-shadow(0 6px 10px rgba(0,0,0,0.45));">
-      <div style="position:relative;width:46px;height:46px;border-radius:9999px;border:3px solid ${color};box-shadow:0 0 0 4px rgba(10,10,20,0.55), 0 0 16px ${color}66;overflow:hidden;background:${grad};display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:18px;">${initial}${photo}${pulse}</div>
-      <div style="position:absolute;left:50%;bottom:0;transform:translateX(-50%);width:0;height:0;border-left:8px solid transparent;border-right:8px solid transparent;border-top:10px solid ${color};"></div>
+    <div style="position:relative;width:48px;height:60px;filter:drop-shadow(0 4px 6px rgba(0,0,0,0.5)) drop-shadow(0 8px 18px rgba(0,0,0,0.35));">
+      <div style="position:relative;width:48px;height:48px;border-radius:9999px;border:2.5px solid #fff;outline:2px solid ${color};outline-offset:0;box-shadow:0 0 0 4px rgba(0,0,0,0.25), 0 0 20px ${color}80;overflow:hidden;background:${grad};display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:19px;letter-spacing:-0.5px;">${initial}${photo}${pulse}</div>
+      <div style="position:absolute;left:50%;bottom:0;transform:translateX(-50%);width:0;height:0;border-left:7px solid transparent;border-right:7px solid transparent;border-top:12px solid ${color};filter:drop-shadow(0 3px 3px rgba(0,0,0,0.4));"></div>
     </div>`;
 
   return L.divIcon({
@@ -183,6 +182,18 @@ function buildIcon(pin: ScenePin | JambasePin) {
   });
 }
 
+// Breathing "you are here" marker — a glowing blue dot with two pulsing rings.
+const USER_DOT_ICON = L.divIcon({
+  className: "",
+  iconSize: [28, 28],
+  iconAnchor: [14, 14],
+  html: `<div style="position:relative;width:28px;height:28px">
+    <div class="sp-user-ring-outer"></div>
+    <div class="sp-user-ring-inner"></div>
+    <div class="sp-user-core"></div>
+  </div>`,
+});
+
 function formatEventDate(d: string) {
   try {
     return new Date(d).toLocaleString("en-IN", {
@@ -192,12 +203,19 @@ function formatEventDate(d: string) {
   } catch { return d; }
 }
 
-function LocationTracker({ onPosition }: { onPosition: (pos: L.LatLng) => void }) {
+// Starts continuous location watching immediately on mount and keeps the dot updated.
+function UserLocationWatcher({ onPosition }: { onPosition: (pos: L.LatLng) => void }) {
+  const map = useMap();
   useMapEvents({ locationfound(e) { onPosition(e.latlng); } });
+  useEffect(() => {
+    map.locate({ watch: true, enableHighAccuracy: true, maxZoom: 15 });
+    return () => { map.stopLocate(); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   return null;
 }
 
-function MapControls({ onLocate }: { onLocate: () => void }) {
+function MapControls({ userPos }: { userPos: L.LatLng | null }) {
   const map = useMap();
   const { toast } = useToast();
   const btn = "h-9 w-9 grid place-items-center rounded-lg text-foreground/90 hover:bg-white/10 transition-colors";
@@ -214,10 +232,16 @@ function MapControls({ onLocate }: { onLocate: () => void }) {
     <div className="absolute right-4 bottom-24 z-[1000] flex flex-col gap-1 rounded-xl glass border border-white/10 p-1">
       <button className={btn} aria-label="Zoom in" onClick={() => map.zoomIn()}><Plus className="h-4 w-4" /></button>
       <button className={btn} aria-label="Zoom out" onClick={() => map.zoomOut()}><Minus className="h-4 w-4" /></button>
-      <button className={btn} aria-label="My location" onClick={() => {
-        map.locate({ setView: true, maxZoom: 15, enableHighAccuracy: true });
-        onLocate();
-      }}><Crosshair className="h-4 w-4" /></button>
+      <button
+        className={btn}
+        aria-label="My location"
+        onClick={() => {
+          if (userPos) map.flyTo(userPos, Math.max(map.getZoom(), 14), { duration: 0.6 });
+          else map.locate({ setView: true, maxZoom: 15, enableHighAccuracy: true });
+        }}
+      >
+        <Crosshair className="h-4 w-4" />
+      </button>
     </div>
   );
 }
@@ -398,8 +422,8 @@ export const SceneMap = forwardRef<
     pins,
     jambasePins = [],
     heatPoints = [],
-    center = [12.9716, 77.5946],
-    zoom = 12,
+    center = [20, 0],
+    zoom = 2,
     mapStyle = "auto",
     showHeatmap = false,
     globalMode = false,
@@ -413,16 +437,47 @@ export const SceneMap = forwardRef<
   const effective = mapStyle === "auto" ? resolved : mapStyle;
   const [userPos, setUserPos] = useState<L.LatLng | null>(null);
 
-  const tile =
-    effective === "satellite"
-      ? { url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", subdomains: "" }
-      : effective === "light"
-        ? { url: "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", subdomains: "abcd" }
-        : { url: "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", subdomains: "abcd" };
+  const TILES = {
+    // Light: full Voyager — colored roads, green parks, blue water, POI icons
+    light: { url: "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png", sub: "abcd", overlay: null as string | null, overlayOpacity: 0 },
+    // Dark: CartoDB Dark Matter base + Voyager (no labels) blended via mix-blend-mode:color
+    // borrows hue/saturation from Voyager (greens, blues) but keeps dark luminance from dark_all
+    dark:  { url: "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", sub: "abcd", overlay: "https://{s}.basemaps.cartocdn.com/rastertiles/voyager_nolabels/{z}/{x}/{y}{r}.png", overlayOpacity: 1 },
+    // Satellite: ArcGIS imagery + Voyager labels overlay = hybrid
+    satellite: { url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", sub: "", overlay: "https://{s}.basemaps.cartocdn.com/rastertiles/voyager_only_labels/{z}/{x}/{y}{r}.png", overlayOpacity: 0.9 },
+  };
+  const tile = effective === "satellite" ? TILES.satellite : effective === "light" ? TILES.light : TILES.dark;
 
   return (
-    <>
-      <style>{`@keyframes scene-pulse{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.4);opacity:.6}}`}</style>
+    <div className={`h-full w-full${effective === "dark" ? " sp-map-dark" : ""}`}>
+      <style>{`
+        /* Pin pulse (live events) */
+        @keyframes scene-pulse{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.4);opacity:.6}}
+        /* User dot rings */
+        @keyframes sp-ring-out{0%{transform:translate(-50%,-50%) scale(1);opacity:.55}100%{transform:translate(-50%,-50%) scale(3.4);opacity:0}}
+        @keyframes sp-core-breathe{0%,100%{box-shadow:0 0 0 0 rgba(59,130,246,.6),0 0 10px 3px rgba(59,130,246,.35)}50%{box-shadow:0 0 0 5px rgba(59,130,246,.15),0 0 18px 6px rgba(59,130,246,.55)}}
+        .sp-user-ring-outer{position:absolute;top:50%;left:50%;width:28px;height:28px;border-radius:50%;background:rgba(59,130,246,.4);animation:sp-ring-out 2.6s ease-out infinite}
+        .sp-user-ring-inner{position:absolute;top:50%;left:50%;width:28px;height:28px;border-radius:50%;background:rgba(59,130,246,.22);animation:sp-ring-out 2.6s ease-out 1.0s infinite}
+        .sp-user-core{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:15px;height:15px;border-radius:50%;background:#3b82f6;border:2.5px solid #fff;animation:sp-core-breathe 2.6s ease-in-out infinite;box-shadow:0 0 10px 3px rgba(59,130,246,.45)}
+        /* Pin marker reset — prevent Leaflet default icon styles leaking */
+        .scene-pin{background:none !important;border:none !important;}
+        /* Sharper tile rendering */
+        .leaflet-tile{image-rendering:-webkit-optimize-contrast;image-rendering:crisp-edges;}
+        /* Dark mode color blending: isolate the tile pane so the two layers blend with
+           each other, not the rest of the page. mix-blend-mode:color takes only the
+           hue+saturation from Voyager (greens, blues, road colors) but keeps dark_all's
+           luminance — dark background stays dark, colors pop through. */
+        .sp-map-dark .leaflet-tile-pane{isolation:isolate;}
+        /* soft-light lifts lighter areas in Voyager (parks, water, roads) relative to the dark
+           base — the background stays dark while colored features pop. saturate(6) on the
+           overlay pre-amplifies Voyager's hues so even subtle soft-light boosts are vivid. */
+        .sp-map-dark .sp-color-overlay{mix-blend-mode:soft-light;filter:saturate(6);opacity:0.95;}
+        /* Popup polish */
+        .scene-popup .leaflet-popup-content-wrapper{background:rgba(13,13,26,0.92);backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,0.08);border-radius:14px;box-shadow:0 8px 32px rgba(0,0,0,0.5);color:#fff;padding:0;}
+        .scene-popup .leaflet-popup-content{margin:0;width:auto !important;}
+        .scene-popup .leaflet-popup-tip-container{display:none;}
+        .scene-popup .leaflet-popup-close-button{color:rgba(255,255,255,0.4) !important;top:8px !important;right:10px !important;font-size:18px !important;}
+      `}</style>
       <MapContainer
         center={center}
         zoom={zoom}
@@ -431,10 +486,13 @@ export const SceneMap = forwardRef<
         maxBoundsViscosity={1.0}
         zoomControl={false}
         attributionControl={false}
-        className="h-full w-full bg-background"
-        style={{ height: "100%", width: "100%" }}
+        className="h-full w-full"
+        style={{ height: "100%", width: "100%", background: effective === "light" ? "#f0ece4" : "#0d0d1a" }}
       >
-        <TileLayer key={effective} url={tile.url} subdomains={tile.subdomains} maxZoom={20} noWrap />
+        <TileLayer key={`${effective}-base`} url={tile.url} subdomains={tile.sub} maxZoom={20} noWrap />
+        {tile.overlay && (
+          <TileLayer key={`${effective}-overlay`} url={tile.overlay} subdomains="abcd" maxZoom={20} noWrap opacity={tile.overlayOpacity} className="sp-color-overlay" />
+        )}
 
         <MapController mapRef={ref} />
         <ScopeViewController globalMode={globalMode} localCenter={center} localZoom={zoom} />
@@ -553,18 +611,15 @@ export const SceneMap = forwardRef<
         ))}
 
         {userPos && (
-          <>
-            <CircleMarker center={userPos} radius={20} pathOptions={{ color: "#3b82f6", weight: 1, fillColor: "#3b82f6", fillOpacity: 0.15 }} />
-            <CircleMarker center={userPos} radius={9} pathOptions={{ color: "#fff", weight: 3, fillColor: "#3b82f6", fillOpacity: 1 }}>
-              <Popup><p className="text-sm font-semibold">You are here</p></Popup>
-            </CircleMarker>
-          </>
+          <Marker position={userPos} icon={USER_DOT_ICON} zIndexOffset={1000}>
+            <Popup className="scene-popup"><p className="text-sm font-semibold px-3 py-2">You are here</p></Popup>
+          </Marker>
         )}
-        <LocationTracker onPosition={setUserPos} />
-        <MapControls onLocate={() => {}} />
+        <UserLocationWatcher onPosition={setUserPos} />
+        <MapControls userPos={userPos} />
         <MinZoomController />
         {onBoundsChange && <BoundsTracker onBoundsChange={onBoundsChange} />}
       </MapContainer>
-    </>
+    </div>
   );
 });

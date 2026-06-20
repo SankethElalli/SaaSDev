@@ -1,5 +1,5 @@
 import { useState, useRef } from "react";
-import { Fingerprint, Search, X, MapPin, Loader2, Music2 } from "lucide-react";
+import { Fingerprint, Search, X, MapPin, Loader2, Music2, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
@@ -22,19 +22,29 @@ export function FingerprintPanel({ open, onClose, onFindOnMap }: Props) {
   const [results, setResults] = useState<MxTrack[]>([]);
   const [loading, setLoading] = useState(false);
   const [searched, setSearched] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  const tooShort = query.trim().length > 0 && query.trim().length < 10;
+
   const search = async () => {
-    if (!query.trim()) return;
+    const q = query.trim();
+    if (!q || q.length < 10) return;
     setLoading(true);
     setSearched(false);
+    setError(null);
     try {
       const res = await fetch(
-        `/api/musixmatch/fingerprint?q=${encodeURIComponent(query.trim())}`,
+        `/api/musixmatch/fingerprint?q=${encodeURIComponent(q)}`,
       );
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as { error?: string };
+        throw new Error(body.error ?? `Server error ${res.status}`);
+      }
       const data = (await res.json()) as { tracks: MxTrack[] };
       setResults(data.tracks ?? []);
-    } catch {
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Search failed");
       setResults([]);
     }
     setLoading(false);
@@ -73,22 +83,22 @@ export function FingerprintPanel({ open, onClose, onFindOnMap }: Props) {
             </button>
           </div>
           <p className="text-xs text-muted-foreground mb-4 ml-8">
-            Heard something live? Type a few words you caught and find the artist on the map.
+            Heard something live? Type <strong>8+ distinctive words</strong> you caught to identify the song.
           </p>
 
-          <div className="flex gap-2 mb-5">
+          <div className="flex gap-2 mb-1">
             <Input
               ref={inputRef}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={handleKey}
-              placeholder="e.g. 'dancing in the rain tonight'"
+              placeholder="e.g. 'keep bleeding keep bleeding love tonight'"
               className="flex-1 rounded-xl bg-white/5 border-white/10 placeholder:text-muted-foreground/50"
               autoFocus
             />
             <Button
               onClick={search}
-              disabled={loading || !query.trim()}
+              disabled={loading || tooShort || !query.trim()}
               className="rounded-xl bg-gradient-to-br from-primary to-secondary shrink-0"
               size="icon"
             >
@@ -100,18 +110,32 @@ export function FingerprintPanel({ open, onClose, onFindOnMap }: Props) {
             </Button>
           </div>
 
+          {tooShort && (
+            <p className="text-[11px] text-amber-400/80 ml-1 mb-3">
+              Type at least 8 distinctive words for an accurate match
+            </p>
+          )}
+          {!tooShort && <div className="mb-4" />}
+
           {!searched && !loading && (
             <div className="flex flex-col items-center gap-2 py-6 text-center">
               <Music2 className="h-8 w-8 text-white/20" />
               <p className="text-xs text-muted-foreground">
-                We'll match your lyrics to local artists in the scene
+                Unique phrases work best — avoid very common words
               </p>
             </div>
           )}
 
-          {searched && results.length === 0 && (
+          {error && (
+            <div className="flex items-center gap-2 rounded-xl border border-destructive/30 bg-destructive/10 px-3 py-2.5 text-sm text-destructive mb-2">
+              <AlertCircle className="h-4 w-4 shrink-0" />
+              {error}
+            </div>
+          )}
+
+          {searched && !error && results.length === 0 && (
             <p className="text-center text-sm text-muted-foreground py-6">
-              No matches found — try different words
+              No matches — try more distinctive words or a longer phrase
             </p>
           )}
 

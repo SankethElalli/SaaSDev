@@ -14,6 +14,7 @@ import jambaseRouter from "./jambase";
 import songstatsRouter from "./songstats";
 import imagesRouter from "./images";
 import spotifyRouter from "./spotify";
+import radioRouter from "./radio";
 
 const router: IRouter = Router();
 
@@ -32,5 +33,6 @@ router.use(jambaseRouter);
 router.use(songstatsRouter);
 router.use(imagesRouter);
 router.use(spotifyRouter);
+router.use(radioRouter);
 
 export default router;

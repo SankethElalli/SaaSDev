@@ -36,6 +36,7 @@ import { AuthDialog } from "@/components/auth/AuthDialog";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { NotificationsMenu } from "@/components/NotificationsMenu";
 import { KaraokeModal } from "@/components/musixmatch/KaraokeModal";
+import { SceneRadio } from "@/components/radio/SceneRadio";
 import { FingerprintPanel } from "@/components/musixmatch/FingerprintPanel";
 import { SetlistPanel } from "@/components/jambase/SetlistPanel";
 import { Input } from "@/components/ui/input";
@@ -55,6 +56,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
+import { useToast } from "@/hooks/use-toast";
 
 interface MxTrack {
   trackId: number;
@@ -136,6 +138,7 @@ const MAP_STYLES: { value: MapStyle; label: string; icon: typeof Users }[] = [
 export default function MapShell() {
   const { data, isLoading } = useGetMapPins();
   const { user, signOut } = useAuth();
+  const { toast } = useToast();
   const [authOpen, setAuthOpen] = useState(false);
   const [activeFilter, setActiveFilter] = useState<FilterKey>("all");
   const [query, setQuery] = useState("");
@@ -164,6 +167,38 @@ export default function MapShell() {
       retryOnMount: false,
     },
   });
+
+  // Map center — read from sessionStorage so re-visiting the page starts at the same spot.
+  const [mapCenter] = useState<[number, number]>(() => {
+    try {
+      const lat = parseFloat(sessionStorage.getItem("sp_geo_lat") ?? "");
+      const lng = parseFloat(sessionStorage.getItem("sp_geo_lng") ?? "");
+      if (!isNaN(lat) && !isNaN(lng)) return [lat, lng];
+    } catch {}
+    return [20, 0]; // neutral world center until geolocation resolves
+  });
+
+  // Request the browser's real location on mount; cache it so next visit is instant.
+  useEffect(() => {
+    if (!navigator.geolocation) return;
+    const alreadyCached = !!sessionStorage.getItem("sp_geo_lat");
+    navigator.geolocation.getCurrentPosition(
+      ({ coords: { latitude: lat, longitude: lng } }) => {
+        try {
+          sessionStorage.setItem("sp_geo_lat", String(lat));
+          sessionStorage.setItem("sp_geo_lng", String(lng));
+        } catch {}
+        // Only fly if we didn't already have a cached position (so we don't
+        // override a position the profile-based centering already set).
+        if (!alreadyCached) {
+          mapRef.current?.flyTo(lat, lng, 12);
+        }
+      },
+      () => {}, // permission denied — keep current center
+      { timeout: 10000, maximumAge: 5 * 60 * 1000 },
+    );
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Fly to the user's onboarding location once it's known — never overrides their stored data
   const hasCenteredRef = useRef(false);
@@ -230,6 +265,9 @@ export default function MapShell() {
   const jbDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const globalModeRef = useRef(globalMode);
   globalModeRef.current = globalMode;
+
+  // Scene Radio
+  const [radioActive, setRadioActive] = useState(false);
 
   // Karaoke modal
   const [karaokePin, setKaraokePin] = useState<ScenePin | null>(null);
@@ -553,6 +591,12 @@ export default function MapShell() {
     setQuery(artistName);
     if (pin) {
       mapRef.current?.flyTo(pin.latitude, pin.longitude);
+    } else {
+      toast({
+        title: `${artistName} isn't on the map yet`,
+        description: "This artist hasn't been added to your local scene.",
+        duration: 3000,
+      });
     }
   };
 
@@ -575,6 +619,8 @@ export default function MapShell() {
             })),
           }))}
           heatPoints={heatPoints}
+          center={mapCenter}
+          zoom={mapCenter[0] === 20 && mapCenter[1] === 0 ? 2 : 12}
           mapStyle={mapStyle}
           showHeatmap={showHeatmap}
           globalMode={globalMode}
@@ -987,6 +1033,21 @@ export default function MapShell() {
 
           {/* Right controls */}
           <div className="pointer-events-auto flex items-center gap-1.5 sm:gap-2 shrink-0">
+            {/* Scene Radio */}
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setRadioActive((v) => !v)}
+              className={cn(
+                "h-9 w-9 sm:h-auto sm:w-auto sm:gap-2 sm:px-3 rounded-2xl glass border border-white/10 transition-all duration-200 hover:border-primary/50 hover:text-primary active:scale-95",
+                radioActive && "border-primary/50 text-primary bg-primary/10",
+              )}
+              aria-label="Toggle Scene Radio"
+            >
+              <Radio className="h-4 w-4" />
+              <span className="hidden sm:inline text-sm font-medium">Scene Radio</span>
+            </Button>
+
             <Popover>
               <PopoverTrigger asChild>
                 <Button
@@ -1128,6 +1189,29 @@ export default function MapShell() {
           venueIdentifier={setlistVenue.id}
           venueName={setlistVenue.name}
           onClose={() => setSetlistVenue(null)}
+        />
+      )}
+
+      {radioActive && (
+        <SceneRadio
+          lat={mapCenter[0]}
+          lng={mapCenter[1]}
+          city={profile?.city ?? visiblePins[0]?.city ?? undefined}
+          artists={visiblePins
+            .filter((p) => p.kind === "artist")
+            .slice(0, 10)
+            .map((p) => ({ name: p.name, genre: p.genre }))}
+          venues={visiblePins
+            .filter((p) => p.kind === "venue")
+            .slice(0, 8)
+            .map((p) => ({ name: p.name, city: p.city }))}
+          liveEvents={jambasePins.slice(0, 6).map((p) => ({
+            name: p.name,
+            venueName: p.venueName,
+            startDate: p.startDate,
+            performers: p.performers,
+          }))}
+          onStop={() => setRadioActive(false)}
         />
       )}
     </div>

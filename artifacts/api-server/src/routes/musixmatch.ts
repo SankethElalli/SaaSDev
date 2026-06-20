@@ -69,12 +69,17 @@ router.get("/musixmatch/synced-lyrics", async (req, res) => {
 });
 
 // GET /musixmatch/fingerprint?q=<partial lyrics>
-// Identifies a live/unreleased track from lyrics fragments heard at a gig.
+// Identifies a track from distinctive lyrics heard at a gig.
 router.get("/musixmatch/fingerprint", async (req, res) => {
   const q = requireQ(req, res);
   if (!q) return;
-  const tracks = await fingerprintByLyrics(q);
-  res.json({ tracks });
+  try {
+    const tracks = await fingerprintByLyrics(q);
+    res.json({ tracks });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "Musixmatch error";
+    res.status(502).json({ error: msg, tracks: [] });
+  }
 });
 
 export default router;
