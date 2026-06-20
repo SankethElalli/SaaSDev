@@ -12,7 +12,6 @@ import {
   UpdateCollaborationRequestParams,
   UpdateCollaborationRequestBody,
 } from "@workspace/api-zod";
-import { dispatchN8nEvent } from "../lib/n8n";
 import { requireAuth } from "../lib/auth";
 
 const router: IRouter = Router();
@@ -84,12 +83,6 @@ router.post("/collaborations", requireAuth, async (req, res) => {
       message: body.message,
     })
     .returning();
-
-  await dispatchN8nEvent("collaboration.requested", {
-    id: inserted.id,
-    fromArtistId: inserted.fromArtistId,
-    toArtistId: inserted.toArtistId,
-  });
 
   const [enriched] = await enrichedCollabQuery().where(
     eq(collaborationRequestsTable.id, inserted.id),

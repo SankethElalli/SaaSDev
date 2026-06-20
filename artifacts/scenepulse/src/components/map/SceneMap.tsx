@@ -347,16 +347,18 @@ function HeatmapLayer({ points }: { points: HeatPoint[] }) {
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const heat = (L as any).heatLayer(points, {
-        radius: 35,
-        blur: 25,
+        radius: 40,
+        blur: 22,
         maxZoom: 17,
         max: 1.0,
+        minOpacity: 0.45,
         gradient: {
-          0.0: "#0ea5e9",
-          0.3: "#8b5cf6",
-          0.6: "#d946ef",
-          0.85: "#f59e0b",
-          1.0: "#ef4444",
+          0.0:  "#4f46e5",
+          0.25: "#9333ea",
+          0.5:  "#db2777",
+          0.72: "#ea580c",
+          0.88: "#f97316",
+          1.0:  "#fbbf24",
         },
       });
       heat.addTo(map);

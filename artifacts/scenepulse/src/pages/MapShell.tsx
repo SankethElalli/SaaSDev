@@ -20,7 +20,7 @@ import {
   LocateFixed,
   Flame,
 } from "lucide-react";
-import { useGetMapPins, useGetProfile, getGetProfileQueryKey } from "@workspace/api-client-react";
+import { useGetMapPins, useGetProfile, useGetMyArtist, getGetProfileQueryKey } from "@workspace/api-client-react";
 import { useAuth } from "@/contexts/auth";
 import { isSupabaseConfigured } from "@/lib/supabase";
 import {
@@ -154,6 +154,43 @@ export default function MapShell() {
       queryKey: getGetProfileQueryKey(user?.id ?? ""),
     },
   });
+
+  // Load artist profile to get stored lat/lng (only for artist role).
+  // retry: false prevents spamming 404s when the artist row doesn't exist yet.
+  const { data: myArtist } = useGetMyArtist(user?.id ?? "", {
+    query: {
+      enabled: !!user?.id && profile?.role === "artist",
+      retry: false,
+      retryOnMount: false,
+    },
+  });
+
+  // Fly to the user's onboarding location once it's known — never overrides their stored data
+  const hasCenteredRef = useRef(false);
+  useEffect(() => {
+    if (hasCenteredRef.current) return;
+
+    // Artist: use stored coordinates directly
+    if (myArtist?.latitude && myArtist?.longitude) {
+      hasCenteredRef.current = true;
+      mapRef.current?.flyTo(myArtist.latitude, myArtist.longitude, 11);
+      return;
+    }
+
+    // Fan / venue: geocode their city name via Nominatim
+    const city = profile?.city;
+    if (!city || profile?.role === "artist") return;
+    hasCenteredRef.current = true;
+    fetch(
+      `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(city)}&format=json&limit=1`,
+      { headers: { "Accept-Language": "en" } },
+    )
+      .then((r) => r.json() as Promise<{ lat: string; lon: string }[]>)
+      .then(([hit]) => {
+        if (hit) mapRef.current?.flyTo(parseFloat(hit.lat), parseFloat(hit.lon), 11);
+      })
+      .catch(() => {});
+  }, [myArtist, profile]);
   // Vibe / lyrics search mode
   const [lyricsMode, setLyricsMode] = useState(false);
   const [vibeResults, setVibeResults] = useState<MxTrack[]>([]);

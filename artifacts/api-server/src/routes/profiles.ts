@@ -9,7 +9,6 @@ import {
   GetMyArtistParams,
   GetMyVenueParams,
 } from "@workspace/api-zod";
-import { dispatchN8nEvent } from "../lib/n8n";
 
 const router: IRouter = Router();
 
@@ -80,12 +79,6 @@ router.post("/profiles", async (req, res) => {
       },
     })
     .returning();
-
-  await dispatchN8nEvent("user.signup", {
-    id: profile.id,
-    email: profile.email,
-    role: profile.role,
-  });
 
   res.json(profile);
 });

@@ -23,7 +23,7 @@ import {
   AddArtistMediaBody,
   DeleteArtistMediaParams,
 } from "@workspace/api-zod";
-import { dispatchN8nEvent } from "../lib/n8n";
+import { enrichArtist } from "../lib/enrich";
 import { requireAuth } from "../lib/auth";
 import { geocodeCity } from "../lib/geocode";
 import { getDeezerArtistImage } from "../lib/deezer";
@@ -66,17 +66,8 @@ router.post("/artists", requireAuth, async (req, res) => {
     .values({ ...body, latitude, longitude, imageUrl: imageUrl ?? undefined })
     .returning();
 
-  await dispatchN8nEvent("artist.created", {
-    id: artist.id,
-    artistName: artist.artistName,
-  });
-  if (artist.spotifyUrl) {
-    await dispatchN8nEvent("artist.enrich", {
-      artistId: artist.id,
-      artistName: artist.artistName,
-      spotifyUrl: artist.spotifyUrl,
-    });
-  }
+  // Fire-and-forget: sync profile tags + optional Cyanite analysis
+  void enrichArtist(artist.id, artist.spotifyUrl ?? null);
   res.status(201).json(artist);
 });
 
@@ -159,17 +150,13 @@ router.post("/artists/:id/enrich", async (req, res) => {
 
   const spotifyUrl = body.spotifyUrl ?? artist.spotifyUrl ?? undefined;
 
-  await dispatchN8nEvent("artist.enrich", {
-    artistId: artist.id,
-    artistName: artist.artistName,
-    spotifyUrl,
-  });
+  // Run in-app enrichment — fire-and-forget so the HTTP response is immediate
+  void enrichArtist(artist.id, spotifyUrl ?? null);
 
   res.status(202).json({
     artistId: artist.id,
     status: "queued",
-    message:
-      "Enrichment queued. Audio & lyric analysis will populate when the n8n pipeline and provider keys are configured.",
+    message: "Enrichment started. Tags and audio analysis will populate shortly.",
   });
 });
 
@@ -260,22 +247,27 @@ router.patch("/artists/:id", requireAuth, async (req, res) => {
     return;
   }
 
+  // Convert empty-string URLs to null so the DB column is properly cleared.
+  const toNull = (v: string | undefined) => (v === "" ? null : v);
+  const patch = {
+    ...body,
+    spotifyUrl:   toNull(body.spotifyUrl),
+    instagramUrl: toNull(body.instagramUrl),
+    youtubeUrl:   toNull(body.youtubeUrl),
+    websiteUrl:   toNull(body.websiteUrl),
+  };
+
   const [artist] = await db
     .update(artistsTable)
-    .set(body)
+    .set(patch)
     .where(eq(artistsTable.id, id))
     .returning();
 
   const spotifyUrlChanged =
-    body.spotifyUrl !== undefined &&
-    body.spotifyUrl !== existing.spotifyUrl &&
-    !!artist.spotifyUrl;
-  if (spotifyUrlChanged) {
-    await dispatchN8nEvent("artist.enrich", {
-      artistId: artist.id,
-      artistName: artist.artistName,
-      spotifyUrl: artist.spotifyUrl,
-    });
+    body.spotifyUrl !== undefined && body.spotifyUrl !== existing.spotifyUrl;
+  // Re-enrich whenever any URL field changes or Spotify URL is updated
+  if (spotifyUrlChanged || body.genres !== undefined || body.moodTags !== undefined) {
+    void enrichArtist(artist.id, artist.spotifyUrl ?? null);
   }
 
   res.json(artist);

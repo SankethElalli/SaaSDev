@@ -17,10 +17,10 @@ import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
-import { Image, Users, ExternalLink, Check, X, Tag, Plus } from "lucide-react";
+import { Image, Users, ExternalLink, Check, X, Tag, Link2 } from "lucide-react";
 import { CreateArtistForm } from "./CreateArtistForm";
 import { MediaManager } from "./MediaManager";
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 
 export function ArtistDashboard({ profile }: { profile: Profile }) {
   const {
@@ -118,6 +118,110 @@ function TagInput({
   );
 }
 
+const LINK_FIELDS = [
+  { name: "spotifyUrl",   label: "Spotify",   placeholder: "https://open.spotify.com/artist/…" },
+  { name: "instagramUrl", label: "Instagram", placeholder: "https://instagram.com/…" },
+  { name: "youtubeUrl",   label: "YouTube",   placeholder: "https://youtube.com/…" },
+  { name: "websiteUrl",   label: "Website",   placeholder: "https://…" },
+] as const;
+
+type LinkField = typeof LINK_FIELDS[number]["name"];
+
+function ArtistLinksSection({
+  artistId,
+  artist,
+  updateArtist,
+}: {
+  artistId: string;
+  artist: { spotifyUrl?: string | null; instagramUrl?: string | null; youtubeUrl?: string | null; websiteUrl?: string | null } | undefined;
+  updateArtist: ReturnType<typeof useUpdateArtist>;
+}) {
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const [links, setLinks] = useState<Record<LinkField, string>>({
+    spotifyUrl: "", instagramUrl: "", youtubeUrl: "", websiteUrl: "",
+  });
+  const initialized = useRef(false);
+
+  useEffect(() => {
+    if (artist && !initialized.current) {
+      initialized.current = true;
+      setLinks({
+        spotifyUrl:   artist.spotifyUrl   ?? "",
+        instagramUrl: artist.instagramUrl ?? "",
+        youtubeUrl:   artist.youtubeUrl   ?? "",
+        websiteUrl:   artist.websiteUrl   ?? "",
+      });
+    }
+  }, [artist]);
+
+  const handleSave = () => {
+    updateArtist.mutate(
+      {
+        id: artistId,
+        data: {
+          spotifyUrl:   links.spotifyUrl   || undefined,
+          instagramUrl: links.instagramUrl || undefined,
+          youtubeUrl:   links.youtubeUrl   || undefined,
+          websiteUrl:   links.websiteUrl   || undefined,
+        },
+      },
+      {
+        onSuccess: () => {
+          toast({ title: "Links saved" });
+          void qc.invalidateQueries({ queryKey: getGetArtistProfileQueryKey(artistId) });
+        },
+        onError: () => toast({ title: "Could not save links", variant: "destructive" }),
+      },
+    );
+  };
+
+  return (
+    <section className="space-y-5">
+      <div className="flex items-center gap-2">
+        <Link2 className="w-5 h-5 text-primary" />
+        <h2 className="text-2xl font-semibold">Links</h2>
+      </div>
+      <p className="text-sm text-muted-foreground -mt-2">
+        Add your streaming and social links. Clear a field and save to remove it.
+      </p>
+      <div className="glass-card rounded-2xl p-6 space-y-4">
+        {LINK_FIELDS.map(({ name, label, placeholder }) => (
+          <div key={name} className="space-y-1.5">
+            <label className="text-sm font-medium text-muted-foreground uppercase tracking-wider">
+              {label}
+            </label>
+            <div className="flex gap-2">
+              <Input
+                value={links[name]}
+                onChange={(e) => setLinks((prev) => ({ ...prev, [name]: e.target.value }))}
+                placeholder={placeholder}
+                className="flex-1"
+              />
+              {links[name] && (
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="outline"
+                  onClick={() => setLinks((prev) => ({ ...prev, [name]: "" }))}
+                  title={`Remove ${label} URL`}
+                >
+                  <X className="w-4 h-4" />
+                </Button>
+              )}
+            </div>
+          </div>
+        ))}
+        <div className="pt-2 flex justify-end">
+          <Button onClick={handleSave} disabled={updateArtist.isPending}>
+            {updateArtist.isPending ? "Saving…" : "Save Links"}
+          </Button>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function ArtistHub({
   profileId,
   artistId,
@@ -212,6 +316,8 @@ function ArtistHub({
           />
         </div>
       </section>
+
+      <ArtistLinksSection artistId={artistId} artist={artist} updateArtist={updateArtist} />
 
       <section className="space-y-5">
         <div className="flex items-center gap-2">
