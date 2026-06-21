@@ -13,6 +13,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/auth";
 import { ArtistActions } from "@/components/artist/ArtistActions";
 import { SongstatsPanel } from "@/components/artist/SongstatsPanel";
+import { PublicTrackCard, type ArtistTrack } from "@/components/dashboard/TrackManager";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
@@ -31,6 +32,7 @@ import {
   Users,
   UserCheck,
   Lock,
+  Scissors,
 } from "lucide-react";
 
 const LINK_ICONS: Record<string, typeof Globe> = {
@@ -139,7 +141,7 @@ function Lightbox({
 }
 
 function CollabTab({ artistId, artistName }: { artistId: string; artistName: string }) {
-  const { user } = useAuth();
+  const { user, session } = useAuth();
   const { toast } = useToast();
   const qc = useQueryClient();
 
@@ -158,6 +160,18 @@ function CollabTab({ artistId, artistName }: { artistId: string; artistName: str
   const createCollab = useCreateCollaborationRequest();
   const [message, setMessage] = useState("");
   const [sent, setSent] = useState(false);
+
+  // Tracks
+  const [tracks, setTracks] = useState<ArtistTrack[]>([]);
+  const [requestingId, setRequestingId] = useState<string | null>(null);
+  const [requestedIds, setRequestedIds] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    fetch(`/api/artists/${artistId}/tracks`)
+      .then((r) => r.ok ? r.json() : [])
+      .then((data: ArtistTrack[]) => setTracks(data))
+      .catch(() => {});
+  }, [artistId]);
 
   const canCollab = profile?.role === "artist" && myArtist && myArtist.id !== artistId;
   const isOwnProfile = myArtist?.id === artistId;
@@ -178,8 +192,56 @@ function CollabTab({ artistId, artistName }: { artistId: string; artistName: str
     );
   };
 
+  const handleRequestStem = async (trackId: string, stemType: string) => {
+    if (!myArtist || !session?.access_token) return;
+    setRequestingId(trackId);
+    try {
+      const res = await fetch(`/api/tracks/${trackId}/stem-requests`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ requesterArtistId: myArtist.id, stemType }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({})) as { error?: string };
+        throw new Error(err.error ?? "Failed to send request");
+      }
+      setRequestedIds((prev) => new Set([...prev, trackId]));
+      toast({ title: "Stem request sent!", description: `${artistName} will be notified.` });
+    } catch (e) {
+      toast({ title: e instanceof Error ? e.message : "Could not send stem request", variant: "destructive" });
+    } finally {
+      setRequestingId(null);
+    }
+  };
+
   return (
     <div className="space-y-6 py-6">
+      {/* Tracks section */}
+      {tracks.length > 0 && (
+        <div className="space-y-4">
+          <div className="flex items-center gap-2">
+            <Scissors className="w-5 h-5 text-secondary" />
+            <h3 className="text-lg font-semibold">{artistName}'s Tracks</h3>
+          </div>
+          <p className="text-sm text-muted-foreground">
+            Listen to {artistName}'s tracks. As an artist, you can request AI stem separation to use individual layers in your own productions.
+          </p>
+          <div className="space-y-3">
+            {tracks.map((track) => (
+              <PublicTrackCard
+                key={track.id}
+                track={track}
+                myArtistId={myArtist?.id ?? null}
+                ownerArtistId={artistId}
+                onRequestStem={handleRequestStem}
+                requesting={requestingId === track.id}
+                requested={requestedIds.has(track.id)}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="glass-card rounded-2xl p-8">
         <div className="flex items-start gap-4 mb-6">
           <div className="w-12 h-12 rounded-2xl bg-secondary/15 flex items-center justify-center flex-shrink-0">
@@ -245,19 +307,6 @@ function CollabTab({ artistId, artistName }: { artistId: string; artistName: str
             </Button>
           </div>
         )}
-      </div>
-
-      <div className="glass-card rounded-2xl p-6">
-        <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground mb-3">About this artist</h3>
-        <p className="text-sm text-muted-foreground leading-relaxed">
-          Visit the <button
-            className="text-primary underline"
-            onClick={() => {
-              const el = document.getElementById("profile-tab-btn");
-              el?.click();
-            }}
-          >Profile tab</button> to listen to their work and review their style before reaching out.
-        </p>
       </div>
     </div>
   );

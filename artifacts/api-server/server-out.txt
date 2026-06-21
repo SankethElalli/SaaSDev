@@ -120,3 +120,63 @@
       "statusCode": 304
     }
     [35mresponseTime[39m: 661
+[01:30:17.476] [32mINFO[39m (175280): [36mrequest completed[39m
+    [35mreq[39m: {
+      "id": 14,
+      "method": "GET",
+      "url": "/api/profiles/5c7e6204-8ba0-41de-aa95-c9309439d62e/artist"
+    }
+    [35mres[39m: {
+      "statusCode": 304
+    }
+    [35mresponseTime[39m: 700
+[01:30:17.477] [32mINFO[39m (175280): [36mrequest completed[39m
+    [35mreq[39m: {
+      "id": 13,
+      "method": "GET",
+      "url": "/api/profiles/5c7e6204-8ba0-41de-aa95-c9309439d62e"
+    }
+    [35mres[39m: {
+      "statusCode": 304
+    }
+    [35mresponseTime[39m: 703
+[01:30:17.480] [32mINFO[39m (175280): [36mrequest completed[39m
+    [35mreq[39m: {
+      "id": 15,
+      "method": "GET",
+      "url": "/api/map/pins"
+    }
+    [35mres[39m: {
+      "statusCode": 304
+    }
+    [35mresponseTime[39m: 700
+[01:30:32.729] [32mINFO[39m (175280): [36mrequest aborted[39m
+    [35mreq[39m: {
+      "id": 18,
+      "method": "GET",
+      "url": "/api/profiles/5c7e6204-8ba0-41de-aa95-c9309439d62e/artist"
+    }
+    [35mres[39m: {
+      "statusCode": null
+    }
+    [35mresponseTime[39m: 244
+[01:30:32.730] [32mINFO[39m (175280): [36mrequest aborted[39m
+    [35mreq[39m: {
+      "id": 16,
+      "method": "GET",
+      "url": "/api/map/pins"
+    }
+    [35mres[39m: {
+      "statusCode": null
+    }
+    [35mresponseTime[39m: 508
+[01:30:32.730] [32mINFO[39m (175280): [36mrequest aborted[39m
+    [35mreq[39m: {
+      "id": 17,
+      "method": "GET",
+      "url": "/api/profiles/5c7e6204-8ba0-41de-aa95-c9309439d62e"
+    }
+    [35mres[39m: {
+      "statusCode": null
+    }
+    [35mresponseTime[39m: 246

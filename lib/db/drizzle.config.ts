@@ -1,11 +1,10 @@
 import { defineConfig } from "drizzle-kit";
-import path from "path";
 import { getConnectionConfig } from "./src/connection";
 
 const config = getConnectionConfig();
 
 export default defineConfig({
-  schema: path.join(__dirname, "./src/schema/index.ts"),
+  schema: "./src/schema/*.ts",
   dialect: "postgresql",
   dbCredentials: config.connectionString
     ? { url: config.connectionString }

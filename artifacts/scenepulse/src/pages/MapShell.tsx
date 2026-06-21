@@ -7,10 +7,8 @@ import {
   CalendarClock,
   TrendingUp,
   Music4,
-  Layers,
   Map,
   Satellite,
-  Check,
   Fingerprint,
   X,
   Music2,
@@ -50,11 +48,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 
@@ -130,10 +123,6 @@ const FILTERS: {
   { key: "all", label: "All", icon: Music4 },
 ];
 
-const MAP_STYLES: { value: MapStyle; label: string; icon: typeof Users }[] = [
-  { value: "auto", label: "Default", icon: Map },
-  { value: "satellite", label: "Satellite", icon: Satellite },
-];
 
 export default function MapShell() {
   const { data, isLoading } = useGetMapPins();
@@ -1033,59 +1022,33 @@ export default function MapShell() {
 
           {/* Right controls */}
           <div className="pointer-events-auto flex items-center gap-1.5 sm:gap-2 shrink-0">
-            {/* Scene Radio */}
+            {/* Map style toggle — cycles auto ↔ satellite like ThemeToggle */}
             <Button
               variant="ghost"
               size="icon"
-              onClick={() => setRadioActive((v) => !v)}
+              onClick={() => setMapStyle((s) => s === "satellite" ? "auto" : "satellite")}
               className={cn(
-                "h-9 w-9 sm:h-auto sm:w-auto sm:gap-2 sm:px-3 rounded-2xl glass border border-white/10 transition-all duration-200 hover:border-primary/50 hover:text-primary active:scale-95",
-                radioActive && "border-primary/50 text-primary bg-primary/10",
+                "h-11 w-11 rounded-2xl glass border border-white/10 transition-all duration-200 hover:border-primary/50 hover:text-primary active:scale-90",
+                mapStyle === "satellite" && "border-primary/50 text-primary",
               )}
-              aria-label="Toggle Scene Radio"
+              aria-label={mapStyle === "satellite" ? "Switch to default map" : "Switch to satellite"}
             >
-              <Radio className="h-4 w-4" />
-              <span className="hidden sm:inline text-sm font-medium">Scene Radio</span>
+              {mapStyle === "satellite"
+                ? <Map className="h-5 w-5 transition-transform duration-300" />
+                : <Satellite className="h-5 w-5 transition-transform duration-300" />
+              }
             </Button>
-
-            <Popover>
-              <PopoverTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className={cn(
-                    "h-9 w-9 sm:h-auto sm:w-auto sm:gap-2 sm:px-3 rounded-2xl glass border border-white/10 transition-all duration-200 hover:border-primary/50 hover:text-primary active:scale-95",
-                    mapStyle !== "auto" && "border-primary/50 text-primary",
-                  )}
-                >
-                  <Layers className="h-4 w-4" />
-                  <span className="hidden sm:inline text-sm font-medium">Layers</span>
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent align="end" className="glass-card w-48 sm:w-56 border-white/10 p-2">
-                <p className="px-2 pb-2 pt-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Base map</p>
-                {MAP_STYLES.map((s) => {
-                  const Icon = s.icon;
-                  const active = mapStyle === s.value;
-                  return (
-                    <button
-                      key={s.value}
-                      onClick={() => setMapStyle(s.value)}
-                      className={cn(
-                        "flex w-full items-center gap-3 rounded-lg px-2 py-2 text-sm transition-all duration-150 hover:bg-primary/10 hover:text-primary active:scale-[0.97]",
-                        active ? "bg-primary/10 text-primary" : "text-foreground",
-                      )}
-                    >
-                      <Icon className="h-4 w-4" />
-                      <span className="flex-1 text-left">{s.label}</span>
-                      {active && <Check className="h-4 w-4 text-primary" />}
-                    </button>
-                  );
-                })}
-              </PopoverContent>
-            </Popover>
             <ThemeToggle />
-            <NotificationsMenu />
+            <NotificationsMenu
+              liveEvents={jambasePins.slice(0, 4).map((p) => ({
+                id: p.id,
+                name: p.name,
+                venueName: p.venueName,
+                startDate: p.startDate,
+                performers: p.performers.map((pf) => ({ name: pf.name, isHeadliner: pf.isHeadliner })),
+              }))}
+              newArtistCount={pins.filter((p) => p.kind === "artist").length > 0 ? Math.min(pins.filter((p) => p.kind === "artist").length, 5) : 0}
+            />
             {user ? (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -1117,6 +1080,22 @@ export default function MapShell() {
       </div>
 
       {/* Status chips — bottom right */}
+      {/* Scene Radio — floating button bottom-left */}
+      <div className="pointer-events-none absolute bottom-24 left-4 z-[1000]">
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={() => setRadioActive((v) => !v)}
+          className={cn(
+            "pointer-events-auto h-11 w-11 rounded-2xl glass border border-white/10 transition-all duration-200 hover:border-primary/50 hover:text-primary active:scale-90",
+            radioActive && "border-primary/50 text-primary bg-primary/10",
+          )}
+          aria-label="Toggle Scene Radio"
+        >
+          <Radio className={cn("h-5 w-5", radioActive && "animate-pulse")} />
+        </Button>
+      </div>
+
       <div className="pointer-events-none absolute bottom-4 sm:bottom-6 right-3 sm:right-4 z-[1000] flex flex-col items-end gap-2">
         {heatLoading && (
           <span className="flex items-center gap-1.5 rounded-full border border-orange-500/30 bg-orange-500/10 px-3 py-1 text-xs text-orange-300/90">

@@ -17,9 +17,12 @@ import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
-import { Image, Users, ExternalLink, Check, X, Tag, Link2 } from "lucide-react";
+import { Image, Users, ExternalLink, Check, X, Tag, Link2, Music2, Scissors } from "lucide-react";
 import { CreateArtistForm } from "./CreateArtistForm";
 import { MediaManager } from "./MediaManager";
+import { TrackManager, type ArtistTrack } from "./TrackManager";
+import { StemRequestsPanel } from "./StemRequestsPanel";
+import { useAuth } from "@/contexts/auth";
 import { useState, useCallback, useEffect, useRef } from "react";
 
 export function ArtistDashboard({ profile }: { profile: Profile }) {
@@ -233,6 +236,7 @@ function ArtistHub({
 }) {
   const qc = useQueryClient();
   const { toast } = useToast();
+  const { session } = useAuth();
 
   const { data: profile } = useGetArtistProfile(artistId, {
     query: { queryKey: getGetArtistProfileQueryKey(artistId) },
@@ -243,6 +247,60 @@ function ArtistHub({
   const addMedia = useAddArtistMedia();
   const deleteMedia = useDeleteArtistMedia();
   const updateArtist = useUpdateArtist();
+
+  // Tracks
+  const [tracks, setTracks] = useState<ArtistTrack[]>([]);
+  const [trackAdding, setTrackAdding] = useState(false);
+  const [trackDeletingId, setTrackDeletingId] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch(`/api/artists/${artistId}/tracks`)
+      .then((r) => r.ok ? r.json() : [])
+      .then((data: ArtistTrack[]) => setTracks(data))
+      .catch(() => {});
+  }, [artistId]);
+
+  const handleAddTrack = async (input: { title: string; url: string }) => {
+    const token = session?.access_token;
+    if (!token) return;
+    setTrackAdding(true);
+    try {
+      const res = await fetch(`/api/artists/${artistId}/tracks`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify(input),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({})) as { error?: string };
+        throw new Error(err.error ?? "Failed");
+      }
+      const created = await res.json() as ArtistTrack;
+      setTracks((prev) => [...prev, created]);
+      toast({ title: "Track added" });
+    } catch (e) {
+      toast({ title: e instanceof Error ? e.message : "Could not add track", variant: "destructive" });
+    } finally {
+      setTrackAdding(false);
+    }
+  };
+
+  const handleDeleteTrack = async (trackId: string) => {
+    const token = session?.access_token;
+    if (!token) return;
+    setTrackDeletingId(trackId);
+    try {
+      await fetch(`/api/artists/${artistId}/tracks/${trackId}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      setTracks((prev) => prev.filter((t) => t.id !== trackId));
+      toast({ title: "Track deleted" });
+    } catch {
+      toast({ title: "Could not delete track", variant: "destructive" });
+    } finally {
+      setTrackDeletingId(null);
+    }
+  };
 
   const { data: collaborations } = useListArtistCollaborations(artistId);
   const updateCollab = useUpdateCollaborationRequest();
@@ -363,6 +421,36 @@ function ArtistHub({
             )
           }
         />
+      </section>
+
+      {/* My Tracks */}
+      <section className="space-y-5">
+        <div className="flex items-center gap-2">
+          <Music2 className="w-5 h-5 text-primary" />
+          <h2 className="text-2xl font-semibold">My Tracks</h2>
+        </div>
+        <p className="text-sm text-muted-foreground -mt-2">
+          Upload up to 3 tracks. Other artists can listen and request stems for their productions.
+        </p>
+        <TrackManager
+          tracks={tracks}
+          adding={trackAdding}
+          deletingId={trackDeletingId}
+          onAdd={handleAddTrack}
+          onDelete={handleDeleteTrack}
+        />
+      </section>
+
+      {/* Stem Requests */}
+      <section className="space-y-5">
+        <div className="flex items-center gap-2">
+          <Scissors className="w-5 h-5 text-secondary" />
+          <h2 className="text-2xl font-semibold">Stem Requests</h2>
+        </div>
+        <p className="text-sm text-muted-foreground -mt-2">
+          Approve requests from other artists to receive AI-separated stems of your tracks.
+        </p>
+        <StemRequestsPanel artistId={artistId} />
       </section>
 
       <section className="space-y-5">

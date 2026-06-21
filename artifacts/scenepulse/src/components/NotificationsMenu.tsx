@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Bell, CalendarClock, Music4, Users, CheckCheck } from "lucide-react";
+import { useState, useMemo } from "react";
+import { Bell, CalendarClock, Music4, CheckCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Popover,
@@ -17,43 +17,89 @@ type SceneNotification = {
   accent: string;
 };
 
-const SEED_NOTIFICATIONS: SceneNotification[] = [
-  {
-    id: "n1",
-    icon: CalendarClock,
-    title: "Live tonight near you",
-    body: "Neon Tigers are playing The Humming Tree at 9 PM.",
-    time: "2h ago",
-    accent: "text-[hsl(330_85%_60%)]",
-  },
-  {
-    id: "n2",
-    icon: Users,
-    title: "New artist in your scene",
-    body: "Basswala just joined ScenePulse in Bengaluru.",
-    time: "5h ago",
-    accent: "text-[hsl(280_80%_58%)]",
-  },
-  {
-    id: "n3",
-    icon: Music4,
-    title: "Mood match",
-    body: "3 new artists match your “ethereal · soulful” vibe.",
-    time: "1d ago",
-    accent: "text-[hsl(190_80%_52%)]",
-  },
-];
+export interface LiveEvent {
+  id: string;
+  name: string;
+  venueName: string;
+  startDate: string;
+  performers: { name: string; isHeadliner: boolean }[];
+}
 
-export function NotificationsMenu() {
+interface Props {
+  liveEvents?: LiveEvent[];
+  newArtistCount?: number;
+}
+
+function formatEventDate(isoDate: string): string {
+  try {
+    const d = new Date(isoDate);
+    const now = new Date();
+    const diffMs = d.getTime() - now.getTime();
+    const diffH = Math.round(diffMs / 3_600_000);
+    if (diffH < 0) return "Tonight";
+    if (diffH < 2) return "Starting soon";
+    if (diffH < 24) return `In ${diffH}h`;
+    const diffD = Math.floor(diffH / 24);
+    if (diffD === 1) return "Tomorrow";
+    if (diffD < 7) return `In ${diffD} days`;
+    return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  } catch {
+    return "";
+  }
+}
+
+export function NotificationsMenu({ liveEvents = [], newArtistCount = 0 }: Props) {
   const [open, setOpen] = useState(false);
   const [readIds, setReadIds] = useState<Set<string>>(new Set());
 
-  const unreadCount = SEED_NOTIFICATIONS.filter(
-    (n) => !readIds.has(n.id),
-  ).length;
+  const notifications = useMemo<SceneNotification[]>(() => {
+    const list: SceneNotification[] = [];
+
+    // Real live events
+    for (const ev of liveEvents.slice(0, 4)) {
+      const headliner = ev.performers.find((p) => p.isHeadliner) ?? ev.performers[0];
+      const who = headliner?.name ?? ev.name;
+      list.push({
+        id: `ev-${ev.id}`,
+        icon: CalendarClock,
+        title: "Live near you",
+        body: `${who} at ${ev.venueName}`,
+        time: formatEventDate(ev.startDate),
+        accent: "text-[hsl(330_85%_60%)]",
+      });
+    }
+
+    // New artists notification
+    if (newArtistCount > 0) {
+      list.push({
+        id: "new-artists",
+        icon: Music4,
+        title: "New in your scene",
+        body: `${newArtistCount} artist${newArtistCount > 1 ? "s" : ""} added to the map recently`,
+        time: "Today",
+        accent: "text-[hsl(280_80%_58%)]",
+      });
+    }
+
+    // Fallback when no real data yet
+    if (list.length === 0) {
+      list.push({
+        id: "tip",
+        icon: Music4,
+        title: "Explore your scene",
+        body: "Zoom into your city to discover local artists and live shows.",
+        time: "Now",
+        accent: "text-[hsl(190_80%_52%)]",
+      });
+    }
+
+    return list;
+  }, [liveEvents, newArtistCount]);
+
+  const unreadCount = notifications.filter((n) => !readIds.has(n.id)).length;
 
   const markAllRead = () =>
-    setReadIds(new Set(SEED_NOTIFICATIONS.map((n) => n.id)));
+    setReadIds(new Set(notifications.map((n) => n.id)));
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -66,7 +112,7 @@ export function NotificationsMenu() {
         >
           <Bell className="h-5 w-5 transition-transform duration-200 group-hover:scale-110 group-hover:-rotate-6" />
           {unreadCount > 0 && (
-            <span className="absolute right-2.5 top-2.5 h-2 w-2 rounded-full bg-secondary" />
+            <span className="absolute right-2.5 top-2.5 h-2 w-2 rounded-full bg-secondary animate-pulse" />
           )}
         </Button>
       </PopoverTrigger>
@@ -95,7 +141,7 @@ export function NotificationsMenu() {
         </div>
 
         <div className="max-h-96 overflow-y-auto">
-          {SEED_NOTIFICATIONS.map((n) => {
+          {notifications.map((n) => {
             const Icon = n.icon;
             const unread = !readIds.has(n.id);
             return (

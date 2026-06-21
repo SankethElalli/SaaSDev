@@ -443,8 +443,8 @@ export const SceneMap = forwardRef<
     // Dark: CartoDB Dark Matter base + Voyager (no labels) blended via mix-blend-mode:color
     // borrows hue/saturation from Voyager (greens, blues) but keeps dark luminance from dark_all
     dark:  { url: "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", sub: "abcd", overlay: "https://{s}.basemaps.cartocdn.com/rastertiles/voyager_nolabels/{z}/{x}/{y}{r}.png", overlayOpacity: 1 },
-    // Satellite: ArcGIS imagery + Voyager labels overlay = hybrid
-    satellite: { url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", sub: "", overlay: "https://{s}.basemaps.cartocdn.com/rastertiles/voyager_only_labels/{z}/{x}/{y}{r}.png", overlayOpacity: 0.9 },
+    // Satellite: clean ArcGIS imagery — no label overlay to preserve the original look
+    satellite: { url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", sub: "", overlay: null as string | null, overlayOpacity: 0 },
   };
   const tile = effective === "satellite" ? TILES.satellite : effective === "light" ? TILES.light : TILES.dark;
 

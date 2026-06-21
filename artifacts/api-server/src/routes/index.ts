@@ -15,6 +15,7 @@ import songstatsRouter from "./songstats";
 import imagesRouter from "./images";
 import spotifyRouter from "./spotify";
 import radioRouter from "./radio";
+import tracksRouter from "./tracks";
 
 const router: IRouter = Router();
 
@@ -34,5 +35,6 @@ router.use(songstatsRouter);
 router.use(imagesRouter);
 router.use(spotifyRouter);
 router.use(radioRouter);
+router.use(tracksRouter);
 
 export default router;
