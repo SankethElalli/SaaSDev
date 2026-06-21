@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { Bell, CalendarClock, Music4, CheckCheck } from "lucide-react";
+import { Bell, CalendarClock, Music4, CheckCheck, Scissors, Check, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Popover,
@@ -7,6 +7,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
+import { useSystemNotifications, type SystemNotification } from "@/hooks/useSystemNotifications";
 
 type SceneNotification = {
   id: string;
@@ -15,6 +16,8 @@ type SceneNotification = {
   body: string;
   time: string;
   accent: string;
+  read: boolean;
+  onRead?: () => void;
 };
 
 export interface LiveEvent {
@@ -48,15 +51,65 @@ function formatEventDate(isoDate: string): string {
   }
 }
 
+function formatAge(isoDate: string): string {
+  try {
+    const diffMs = Date.now() - new Date(isoDate).getTime();
+    const diffM = Math.round(diffMs / 60_000);
+    if (diffM < 1) return "Just now";
+    if (diffM < 60) return `${diffM}m ago`;
+    const diffH = Math.round(diffM / 60);
+    if (diffH < 24) return `${diffH}h ago`;
+    return `${Math.round(diffH / 24)}d ago`;
+  } catch {
+    return "";
+  }
+}
+
+const STEM_ICON_MAP: Record<string, typeof Bell> = {
+  stem_request_received: Scissors,
+  stem_request_approved: Check,
+  stem_request_declined: X,
+  stems_ready: Scissors,
+};
+
+const STEM_ACCENT_MAP: Record<string, string> = {
+  stem_request_received: "text-amber-400",
+  stem_request_approved: "text-blue-400",
+  stem_request_declined: "text-red-400",
+  stems_ready: "text-green-400",
+};
+
+function toSceneNotification(
+  sn: SystemNotification,
+  onRead: () => void,
+): SceneNotification {
+  return {
+    id: `sys-${sn.id}`,
+    icon: STEM_ICON_MAP[sn.type] ?? Bell,
+    title: sn.title,
+    body: sn.body ?? "",
+    time: formatAge(sn.createdAt),
+    accent: STEM_ACCENT_MAP[sn.type] ?? "text-primary",
+    read: sn.read,
+    onRead,
+  };
+}
+
 export function NotificationsMenu({ liveEvents = [], newArtistCount = 0 }: Props) {
   const [open, setOpen] = useState(false);
-  const [readIds, setReadIds] = useState<Set<string>>(new Set());
+  const [sceneReadIds, setSceneReadIds] = useState<Set<string>>(new Set());
+  const { notifications: sysNotifs, markRead, markAllRead } = useSystemNotifications();
 
   const notifications = useMemo<SceneNotification[]>(() => {
     const list: SceneNotification[] = [];
 
-    // Real live events
-    for (const ev of liveEvents.slice(0, 4)) {
+    // System notifications (stem events) — most recent first
+    for (const sn of sysNotifs.slice(0, 10)) {
+      list.push(toSceneNotification(sn, () => void markRead(sn.id)));
+    }
+
+    // Live events
+    for (const ev of liveEvents.slice(0, 3)) {
       const headliner = ev.performers.find((p) => p.isHeadliner) ?? ev.performers[0];
       const who = headliner?.name ?? ev.name;
       list.push({
@@ -66,22 +119,26 @@ export function NotificationsMenu({ liveEvents = [], newArtistCount = 0 }: Props
         body: `${who} at ${ev.venueName}`,
         time: formatEventDate(ev.startDate),
         accent: "text-[hsl(330_85%_60%)]",
+        read: sceneReadIds.has(`ev-${ev.id}`),
+        onRead: () => setSceneReadIds((prev) => new Set(prev).add(`ev-${ev.id}`)),
       });
     }
 
-    // New artists notification
+    // New artists
     if (newArtistCount > 0) {
+      const nid = "new-artists";
       list.push({
-        id: "new-artists",
+        id: nid,
         icon: Music4,
         title: "New in your scene",
-        body: `${newArtistCount} artist${newArtistCount > 1 ? "s" : ""} added to the map recently`,
+        body: `${newArtistCount} artist${newArtistCount > 1 ? "s" : ""} added recently`,
         time: "Today",
         accent: "text-[hsl(280_80%_58%)]",
+        read: sceneReadIds.has(nid),
+        onRead: () => setSceneReadIds((prev) => new Set(prev).add(nid)),
       });
     }
 
-    // Fallback when no real data yet
     if (list.length === 0) {
       list.push({
         id: "tip",
@@ -90,16 +147,19 @@ export function NotificationsMenu({ liveEvents = [], newArtistCount = 0 }: Props
         body: "Zoom into your city to discover local artists and live shows.",
         time: "Now",
         accent: "text-[hsl(190_80%_52%)]",
+        read: true,
       });
     }
 
     return list;
-  }, [liveEvents, newArtistCount]);
+  }, [sysNotifs, liveEvents, newArtistCount, sceneReadIds]);
 
-  const unreadCount = notifications.filter((n) => !readIds.has(n.id)).length;
+  const unreadCount = notifications.filter((n) => !n.read).length;
 
-  const markAllRead = () =>
-    setReadIds(new Set(notifications.map((n) => n.id)));
+  const handleMarkAllRead = () => {
+    void markAllRead();
+    setSceneReadIds(new Set(notifications.map((n) => n.id)));
+  };
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -116,10 +176,7 @@ export function NotificationsMenu({ liveEvents = [], newArtistCount = 0 }: Props
           )}
         </Button>
       </PopoverTrigger>
-      <PopoverContent
-        align="end"
-        className="glass-card w-80 border-white/10 p-0"
-      >
+      <PopoverContent align="end" className="glass-card w-80 border-white/10 p-0">
         <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
           <div className="flex items-center gap-2">
             <span className="font-semibold">Notifications</span>
@@ -131,7 +188,7 @@ export function NotificationsMenu({ liveEvents = [], newArtistCount = 0 }: Props
           </div>
           {unreadCount > 0 && (
             <button
-              onClick={markAllRead}
+              onClick={handleMarkAllRead}
               className="flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
             >
               <CheckCheck className="h-3.5 w-3.5" />
@@ -143,41 +200,25 @@ export function NotificationsMenu({ liveEvents = [], newArtistCount = 0 }: Props
         <div className="max-h-96 overflow-y-auto">
           {notifications.map((n) => {
             const Icon = n.icon;
-            const unread = !readIds.has(n.id);
             return (
               <button
                 key={n.id}
-                onClick={() =>
-                  setReadIds((prev) => new Set(prev).add(n.id))
-                }
+                onClick={() => n.onRead?.()}
                 className={cn(
                   "flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-white/5",
-                  unread && "bg-white/[0.03]",
+                  !n.read && "bg-white/[0.03]",
                 )}
               >
-                <span
-                  className={cn(
-                    "mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-white/5",
-                    n.accent,
-                  )}
-                >
+                <span className={cn("mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-white/5", n.accent)}>
                   <Icon className="h-4 w-4" />
                 </span>
                 <span className="flex-1">
                   <span className="flex items-center gap-2">
-                    <span className="text-sm font-medium leading-tight text-foreground">
-                      {n.title}
-                    </span>
-                    {unread && (
-                      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-secondary" />
-                    )}
+                    <span className="text-sm font-medium leading-tight text-foreground">{n.title}</span>
+                    {!n.read && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-secondary" />}
                   </span>
-                  <span className="mt-0.5 block text-xs leading-snug text-muted-foreground">
-                    {n.body}
-                  </span>
-                  <span className="mt-1 block text-[10px] uppercase tracking-wide text-muted-foreground/70">
-                    {n.time}
-                  </span>
+                  <span className="mt-0.5 block text-xs leading-snug text-muted-foreground">{n.body}</span>
+                  <span className="mt-1 block text-[10px] uppercase tracking-wide text-muted-foreground/70">{n.time}</span>
                 </span>
               </button>
             );

@@ -1,6 +1,7 @@
 import { Link, useLocation } from "wouter";
 import { ArrowLeft, LayoutDashboard, Settings as SettingsIcon, LogOut } from "lucide-react";
 import { useAuth } from "@/contexts/auth";
+import { NotificationsMenu } from "@/components/NotificationsMenu";
 
 const FULLSCREEN_ROUTES = ["/", "/map"];
 
@@ -31,6 +32,7 @@ function AccountNav() {
     <div className="fixed right-4 top-4 z-50 flex items-center gap-2">
       {user ? (
         <>
+          <NotificationsMenu />
           <Link href="/dashboard" className={pill}>
             <LayoutDashboard className="h-4 w-4" />
             <span className="hidden sm:inline">Dashboard</span>

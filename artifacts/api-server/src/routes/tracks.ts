@@ -6,9 +6,35 @@ import {
   artistTracksTable,
   trackStemRequestsTable,
   trackStemsTable,
+  notificationsTable,
+  profilesTable,
 } from "@workspace/db";
 import { requireAuth } from "../lib/auth";
-import { dispatchN8nEvent } from "../lib/n8n";
+import { processStemsBackground } from "../lib/lalal";
+import { logger } from "../lib/logger";
+
+async function notify(
+  profileId: string,
+  type: string,
+  title: string,
+  body: string,
+  metadata?: Record<string, unknown>,
+) {
+  try {
+    await db.insert(notificationsTable).values({ profileId, type, title, body, metadata });
+  } catch {
+    // non-fatal
+  }
+}
+
+async function getArtistProfileId(artistId: string): Promise<string | null> {
+  const [row] = await db
+    .select({ profileId: artistsTable.profileId })
+    .from(artistsTable)
+    .where(eq(artistsTable.id, artistId))
+    .limit(1);
+  return row?.profileId ?? null;
+}
 
 const router: IRouter = Router();
 
@@ -175,6 +201,18 @@ router.post("/tracks/:trackId/stem-requests", requireAuth, async (req, res) => {
     })
     .returning();
 
+  // Notify track owner
+  const ownerProfileId = await getArtistProfileId(track.artistId);
+  if (ownerProfileId) {
+    await notify(
+      ownerProfileId,
+      "stem_request_received",
+      "New stem request",
+      `Someone requested the ${stemType} stem from "${track.title}"`,
+      { stemRequestId: inserted.id, trackId },
+    );
+  }
+
   res.status(201).json(inserted);
 });
 
@@ -259,6 +297,28 @@ router.patch("/stem-requests/:id", requireAuth, async (req, res) => {
     .where(eq(trackStemRequestsTable.id, id))
     .returning();
 
+  // Notify requester of approve/decline
+  const requesterProfileId = await getArtistProfileId(stemReq.requesterArtistId);
+  if (requesterProfileId) {
+    if (status === "approved") {
+      await notify(
+        requesterProfileId,
+        "stem_request_approved",
+        "Stem request approved",
+        `Your ${stemReq.stemType} stem request is being processed`,
+        { stemRequestId: id, trackId: stemReq.trackId },
+      );
+    } else {
+      await notify(
+        requesterProfileId,
+        "stem_request_declined",
+        "Stem request declined",
+        `Your ${stemReq.stemType} stem request was declined`,
+        { stemRequestId: id, trackId: stemReq.trackId },
+      );
+    }
+  }
+
   // On approval: fetch the track URL and dispatch to n8n for lalal.ai processing
   if (status === "approved") {
     const [track] = await db
@@ -268,18 +328,15 @@ router.patch("/stem-requests/:id", requireAuth, async (req, res) => {
       .limit(1);
 
     if (track) {
-      // Mark as processing
+      // Mark as processing immediately
       await db
         .update(trackStemRequestsTable)
         .set({ status: "processing", updatedAt: new Date() })
         .where(eq(trackStemRequestsTable.id, id));
 
-      await dispatchN8nEvent("stem.process", {
-        stemRequestId: id,
-        trackId: stemReq.trackId,
-        trackUrl: track.url,
-        stem: stemReq.stemType,
-        splitter: "phoenix",
+      // Fire-and-forget background processing — does not block the response
+      processStemsBackground(id, track.url, track.title, stemReq.stemType).catch((err) => {
+        logger.error({ err, stemRequestId: id }, "Background stem processing crashed");
       });
     }
   }

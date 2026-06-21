@@ -6,8 +6,6 @@ import {
   artistAudioAnalysisTable,
   artistLyricAnalysisTable,
   artistTagsTable,
-  trackStemRequestsTable,
-  trackStemsTable,
   insertArtistAudioAnalysisSchema,
   insertArtistLyricAnalysisSchema,
 } from "@workspace/db";
@@ -111,30 +109,6 @@ router.post("/webhooks/n8n/:event", async (req, res) => {
         parsed.data.themes,
         parsed.data.source ?? "n8n",
       );
-      break;
-    }
-    case "stem.ready": {
-      const { stemRequestId, stems } = payload as {
-        stemRequestId?: string;
-        stems?: { type: string; url: string }[];
-      };
-      if (typeof stemRequestId !== "string" || !Array.isArray(stems)) {
-        res.status(400).json({ error: "stemRequestId and stems[] are required" });
-        return;
-      }
-      await db
-        .update(trackStemRequestsTable)
-        .set({ status: "ready", updatedAt: new Date() })
-        .where(eq(trackStemRequestsTable.id, stemRequestId));
-      if (stems.length > 0) {
-        await db.insert(trackStemsTable).values(
-          stems.map((s) => ({
-            stemRequestId,
-            stemType: s.type,
-            url: s.url,
-          })),
-        );
-      }
       break;
     }
     default:

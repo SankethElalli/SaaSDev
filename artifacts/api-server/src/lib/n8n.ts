@@ -12,10 +12,15 @@ export async function dispatchN8nEvent(
   event: string,
   payload: Record<string, unknown>,
 ): Promise<void> {
-  if (!N8N_WEBHOOK_URL) return;
+  if (!N8N_WEBHOOK_URL) {
+    logger.warn({ event }, "N8N_WEBHOOK_URL not set — skipping dispatch");
+    return;
+  }
+
+  logger.info({ event, url: N8N_WEBHOOK_URL }, "Dispatching n8n event");
 
   try {
-    await fetch(N8N_WEBHOOK_URL, {
+    const res = await fetch(N8N_WEBHOOK_URL, {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -25,6 +30,7 @@ export async function dispatchN8nEvent(
       },
       body: JSON.stringify({ event, payload, sentAt: new Date().toISOString() }),
     });
+    logger.info({ event, status: res.status }, "n8n dispatch response");
   } catch (err) {
     logger.warn({ err, event }, "Failed to dispatch n8n event");
   }

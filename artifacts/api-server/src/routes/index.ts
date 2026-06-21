@@ -16,6 +16,7 @@ import imagesRouter from "./images";
 import spotifyRouter from "./spotify";
 import radioRouter from "./radio";
 import tracksRouter from "./tracks";
+import notificationsRouter from "./notifications";
 
 const router: IRouter = Router();
 
@@ -36,5 +37,6 @@ router.use(imagesRouter);
 router.use(spotifyRouter);
 router.use(radioRouter);
 router.use(tracksRouter);
+router.use(notificationsRouter);
 
 export default router;

@@ -9,3 +9,4 @@ export * from "./follows";
 export * from "./venue-media";
 export * from "./collaborations";
 export * from "./tracks";
+export * from "./notifications";
