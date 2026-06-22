@@ -74,42 +74,43 @@
 }
 
 :root {
-  --background: 240 10% 98%;
-  --foreground: 240 10% 4%;
+  /* Modern vintage — warm amber gold + slate steel, no purple/pink/cyan */
+  --background: 36 12% 97%;
+  --foreground: 24 15% 10%;
   --card: 0 0% 100%;
-  --card-foreground: 240 10% 4%;
+  --card-foreground: 24 15% 10%;
   --popover: 0 0% 100%;
-  --popover-foreground: 240 10% 4%;
-  --primary: 280 80% 50%;
+  --popover-foreground: 24 15% 10%;
+  --primary: 36 78% 48%;            /* burnished amber gold */
   --primary-foreground: 0 0% 100%;
-  --secondary: 190 80% 50%;
+  --secondary: 210 35% 46%;         /* slate steel blue */
   --secondary-foreground: 0 0% 100%;
-  --muted: 240 5% 90%;
-  --muted-foreground: 240 5% 40%;
-  --accent: 280 80% 50%;
+  --muted: 36 8% 91%;
+  --muted-foreground: 36 6% 42%;
+  --accent: 36 78% 48%;
   --accent-foreground: 0 0% 100%;
-  --destructive: 0 84% 60%;
+  --destructive: 0 72% 52%;
   --destructive-foreground: 0 0% 100%;
-  --border: 240 6% 90%;
-  --input: 240 6% 90%;
-  --ring: 280 80% 50%;
-  
+  --border: 36 10% 88%;
+  --input: 36 10% 88%;
+  --ring: 36 78% 48%;
+
   --card-border: var(--border);
   --popover-border: var(--border);
-  --sidebar: 240 5% 96%;
-  --sidebar-foreground: 240 10% 4%;
-  --sidebar-border: 240 6% 90%;
-  --sidebar-primary: 280 80% 50%;
+  --sidebar: 36 8% 95%;
+  --sidebar-foreground: 24 15% 10%;
+  --sidebar-border: 36 10% 88%;
+  --sidebar-primary: 36 78% 48%;
   --sidebar-primary-foreground: 0 0% 100%;
-  --sidebar-accent: 190 80% 50%;
+  --sidebar-accent: 210 35% 46%;
   --sidebar-accent-foreground: 0 0% 100%;
-  --sidebar-ring: 280 80% 50%;
+  --sidebar-ring: 36 78% 48%;
 
-  --chart-1: 280 80% 50%;
-  --chart-2: 190 80% 50%;
-  --chart-3: 330 80% 50%;
-  --chart-4: 45 80% 50%;
-  --chart-5: 160 80% 50%;
+  --chart-1: 36 78% 48%;
+  --chart-2: 210 35% 46%;
+  --chart-3: 18 65% 48%;
+  --chart-4: 158 38% 42%;
+  --chart-5: 38 90% 62%;
 
   --radius: 0.75rem;
   --app-font-sans: "Champ", "Space Grotesk", "Inter", sans-serif;
@@ -118,42 +119,42 @@
 }
 
 .dark {
-  --background: 240 30% 4%;
-  --foreground: 0 0% 98%;
-  --card: 240 30% 6%;
-  --card-foreground: 0 0% 98%;
-  --popover: 240 30% 6%;
-  --popover-foreground: 0 0% 98%;
-  --primary: 280 90% 65%;
-  --primary-foreground: 0 0% 100%;
-  --secondary: 190 90% 55%;
+  --background: 24 18% 5%;
+  --foreground: 36 12% 95%;
+  --card: 24 16% 7%;
+  --card-foreground: 36 12% 95%;
+  --popover: 24 16% 7%;
+  --popover-foreground: 36 12% 95%;
+  --primary: 38 80% 58%;            /* warm gold — brighter in dark */
+  --primary-foreground: 24 20% 8%;  /* dark text on gold */
+  --secondary: 210 30% 54%;         /* muted slate blue */
   --secondary-foreground: 0 0% 100%;
-  --muted: 240 20% 15%;
-  --muted-foreground: 240 10% 65%;
-  --accent: 280 90% 65%;
-  --accent-foreground: 0 0% 100%;
-  --destructive: 0 62% 30%;
+  --muted: 24 14% 14%;
+  --muted-foreground: 36 8% 58%;
+  --accent: 38 80% 58%;
+  --accent-foreground: 24 20% 8%;
+  --destructive: 0 58% 38%;
   --destructive-foreground: 0 0% 100%;
-  --border: 240 20% 15%;
-  --input: 240 20% 15%;
-  --ring: 280 90% 65%;
-  
-  --card-border: 240 20% 15%;
-  --popover-border: 240 20% 15%;
-  --sidebar: 240 30% 6%;
-  --sidebar-foreground: 0 0% 98%;
-  --sidebar-border: 240 20% 15%;
-  --sidebar-primary: 280 90% 65%;
-  --sidebar-primary-foreground: 0 0% 100%;
-  --sidebar-accent: 190 90% 55%;
-  --sidebar-accent-foreground: 0 0% 100%;
-  --sidebar-ring: 280 90% 65%;
+  --border: 24 14% 14%;
+  --input: 24 14% 16%;
+  --ring: 38 80% 58%;
 
-  --chart-1: 280 90% 65%;
-  --chart-2: 190 90% 55%;
-  --chart-3: 330 90% 65%;
-  --chart-4: 45 90% 65%;
-  --chart-5: 160 90% 65%;
+  --card-border: 24 14% 14%;
+  --popover-border: 24 14% 14%;
+  --sidebar: 24 18% 5%;
+  --sidebar-foreground: 36 12% 95%;
+  --sidebar-border: 24 14% 14%;
+  --sidebar-primary: 38 80% 58%;
+  --sidebar-primary-foreground: 24 20% 8%;
+  --sidebar-accent: 210 30% 54%;
+  --sidebar-accent-foreground: 0 0% 100%;
+  --sidebar-ring: 38 80% 58%;
+
+  --chart-1: 38 80% 58%;
+  --chart-2: 210 30% 54%;
+  --chart-3: 18 65% 52%;
+  --chart-4: 158 38% 48%;
+  --chart-5: 38 92% 68%;
 }
 
 @layer base {
@@ -171,4 +172,9 @@
 
 .glass-card {
   @apply bg-card/40 backdrop-blur-md border border-white/10 dark:border-white/5 shadow-xl;
+}
+
+/* Higher opacity for overlays sitting on satellite imagery */
+.glass-satellite {
+  @apply bg-black/65 backdrop-blur-md border border-white/12;
 }

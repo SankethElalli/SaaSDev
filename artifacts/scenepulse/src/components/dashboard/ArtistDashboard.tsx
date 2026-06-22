@@ -3,12 +3,9 @@ import {
   useGetArtistProfile,
   useAddArtistMedia,
   useDeleteArtistMedia,
-  useListArtistCollaborations,
-  useUpdateCollaborationRequest,
   useUpdateArtist,
   getGetMyArtistQueryKey,
   getGetArtistProfileQueryKey,
-  getListArtistCollaborationsQueryKey,
 } from "@workspace/api-client-react";
 import type { Profile } from "@workspace/api-client-react";
 import { isNotFound } from "@/lib/api-error";
@@ -17,12 +14,9 @@ import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
-import { Image, Users, ExternalLink, Check, X, Tag, Link2, Music2, Scissors } from "lucide-react";
+import { Image, Users, ExternalLink, Check, X, Tag, Link2 } from "lucide-react";
 import { CreateArtistForm } from "./CreateArtistForm";
 import { MediaManager } from "./MediaManager";
-import { TrackManager, type ArtistTrack } from "./TrackManager";
-import { StemRequestsPanel } from "./StemRequestsPanel";
-import { useAuth } from "@/contexts/auth";
 import { useState, useCallback, useEffect, useRef } from "react";
 
 export function ArtistDashboard({ profile }: { profile: Profile }) {
@@ -236,7 +230,6 @@ function ArtistHub({
 }) {
   const qc = useQueryClient();
   const { toast } = useToast();
-  const { session } = useAuth();
 
   const { data: profile } = useGetArtistProfile(artistId, {
     query: { queryKey: getGetArtistProfileQueryKey(artistId) },
@@ -248,69 +241,8 @@ function ArtistHub({
   const deleteMedia = useDeleteArtistMedia();
   const updateArtist = useUpdateArtist();
 
-  // Tracks
-  const [tracks, setTracks] = useState<ArtistTrack[]>([]);
-  const [trackAdding, setTrackAdding] = useState(false);
-  const [trackDeletingId, setTrackDeletingId] = useState<string | null>(null);
-
-  useEffect(() => {
-    fetch(`/api/artists/${artistId}/tracks`)
-      .then((r) => r.ok ? r.json() : [])
-      .then((data: ArtistTrack[]) => setTracks(data))
-      .catch(() => {});
-  }, [artistId]);
-
-  const handleAddTrack = async (input: { title: string; url: string }) => {
-    const token = session?.access_token;
-    if (!token) return;
-    setTrackAdding(true);
-    try {
-      const res = await fetch(`/api/artists/${artistId}/tracks`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify(input),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({})) as { error?: string };
-        throw new Error(err.error ?? "Failed");
-      }
-      const created = await res.json() as ArtistTrack;
-      setTracks((prev) => [...prev, created]);
-      toast({ title: "Track added" });
-    } catch (e) {
-      toast({ title: e instanceof Error ? e.message : "Could not add track", variant: "destructive" });
-    } finally {
-      setTrackAdding(false);
-    }
-  };
-
-  const handleDeleteTrack = async (trackId: string) => {
-    const token = session?.access_token;
-    if (!token) return;
-    setTrackDeletingId(trackId);
-    try {
-      await fetch(`/api/artists/${artistId}/tracks/${trackId}`, {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      setTracks((prev) => prev.filter((t) => t.id !== trackId));
-      toast({ title: "Track deleted" });
-    } catch {
-      toast({ title: "Could not delete track", variant: "destructive" });
-    } finally {
-      setTrackDeletingId(null);
-    }
-  };
-
-  const { data: collaborations } = useListArtistCollaborations(artistId);
-  const updateCollab = useUpdateCollaborationRequest();
-
   const invalidateMedia = () =>
     qc.invalidateQueries({ queryKey: getGetArtistProfileQueryKey(artistId) });
-  const invalidateCollabs = () =>
-    qc.invalidateQueries({
-      queryKey: getListArtistCollaborationsQueryKey(artistId),
-    });
 
   const handleTagSave = useCallback(
     (field: "genres" | "moodTags" | "themes", tags: string[]) => {
@@ -338,11 +270,18 @@ function ArtistHub({
             Your artist hub — manage media, tags and collaborations.
           </p>
         </div>
-        <Button variant="outline" asChild>
-          <Link href={`/artists/${artistId}`}>
-            <ExternalLink className="w-4 h-4 mr-2" /> View public page
-          </Link>
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" asChild>
+            <Link href={`/artists/${artistId}`}>
+              <ExternalLink className="w-4 h-4 mr-2" /> View public page
+            </Link>
+          </Button>
+          <Button variant="secondary" asChild>
+            <Link href={`/artists/${artistId}?tab=collab`}>
+              <Users className="w-4 h-4 mr-2" /> Collab profile
+            </Link>
+          </Button>
+        </div>
       </header>
 
       <section className="space-y-5">
@@ -423,108 +362,6 @@ function ArtistHub({
         />
       </section>
 
-      {/* My Tracks */}
-      <section className="space-y-5">
-        <div className="flex items-center gap-2">
-          <Music2 className="w-5 h-5 text-primary" />
-          <h2 className="text-2xl font-semibold">My Tracks</h2>
-        </div>
-        <p className="text-sm text-muted-foreground -mt-2">
-          Upload up to 3 tracks. Other artists can listen and request stems for their productions.
-        </p>
-        <TrackManager
-          tracks={tracks}
-          adding={trackAdding}
-          deletingId={trackDeletingId}
-          onAdd={handleAddTrack}
-          onDelete={handleDeleteTrack}
-        />
-      </section>
-
-      {/* Stem Requests */}
-      <section className="space-y-5">
-        <div className="flex items-center gap-2">
-          <Scissors className="w-5 h-5 text-secondary" />
-          <h2 className="text-2xl font-semibold">Stem Requests</h2>
-        </div>
-        <p className="text-sm text-muted-foreground -mt-2">
-          Approve requests from other artists to receive AI-separated stems of your tracks.
-        </p>
-        <StemRequestsPanel artistId={artistId} />
-      </section>
-
-      <section className="space-y-5">
-        <div className="flex items-center gap-2">
-          <Users className="w-5 h-5 text-secondary" />
-          <h2 className="text-2xl font-semibold">Collaborations</h2>
-        </div>
-        {collaborations && collaborations.length > 0 ? (
-          <div className="space-y-3">
-            {collaborations.map((c) => {
-              const incoming = c.toArtistId === artistId;
-              const other = incoming ? c.fromArtistName : c.toArtistName;
-              return (
-                <div
-                  key={c.id}
-                  className="glass-card p-4 rounded-xl flex flex-wrap items-center gap-3"
-                >
-                  <div className="flex-1 min-w-0">
-                    <p className="font-medium">
-                      {incoming ? "Request from" : "Request to"}{" "}
-                      <span className="text-primary">
-                        {other ?? "Unknown artist"}
-                      </span>
-                    </p>
-                    {c.message && (
-                      <p className="text-sm text-muted-foreground truncate">
-                        {c.message}
-                      </p>
-                    )}
-                  </div>
-                  {incoming && c.status === "pending" ? (
-                    <div className="flex gap-2">
-                      <Button
-                        size="sm"
-                        onClick={() =>
-                          updateCollab.mutate(
-                            { id: c.id, data: { status: "accepted" } },
-                            { onSuccess: () => void invalidateCollabs() },
-                          )
-                        }
-                        data-testid={`button-accept-collab-${c.id}`}
-                      >
-                        <Check className="w-4 h-4 mr-1" /> Accept
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() =>
-                          updateCollab.mutate(
-                            { id: c.id, data: { status: "declined" } },
-                            { onSuccess: () => void invalidateCollabs() },
-                          )
-                        }
-                        data-testid={`button-decline-collab-${c.id}`}
-                      >
-                        <X className="w-4 h-4 mr-1" /> Decline
-                      </Button>
-                    </div>
-                  ) : (
-                    <span className="px-3 py-1 rounded-full text-xs font-semibold uppercase tracking-wider bg-muted capitalize">
-                      {c.status}
-                    </span>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        ) : (
-          <p className="text-sm text-muted-foreground italic">
-            No collaboration requests yet. Visit another artist's page to request
-            one.
-          </p>
-        )}
-      </section>
     </div>
   );
 }

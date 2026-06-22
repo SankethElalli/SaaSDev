@@ -40,7 +40,7 @@ import { SetlistPanel } from "@/components/jambase/SetlistPanel";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -66,6 +66,60 @@ interface CyaniteAnalysis {
   characterTags?: string[];
   energyLevel?: string | null;
   bpm?: number | null;
+}
+
+interface VibeMatchedArtist {
+  id: string;
+  artistName: string;
+  city: string | null;
+  imageUrl: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  matchScore: number;
+  matchedTags: string[];
+  distanceKm: number | null;
+  proximityLabel: string;
+}
+
+interface HeatArtist {
+  artistId: string;
+  artistName: string;
+  lat: number;
+  lng: number;
+  traction: number;
+  city: string | null;
+  imageUrl: string | null;
+  genre: string | null;
+  spotifyUrl: string | null;
+  monthlyListeners: number | null;
+}
+
+interface HeatClickResult {
+  lat: number;
+  lng: number;
+  zoom: number;
+  radiusKm: number;
+  artists: (HeatArtist & { distanceKm: number })[];
+}
+
+function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 6371;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLng = ((lng2 - lng1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) *
+    Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function zoomToRadiusKm(zoom: number): number {
+  if (zoom >= 14) return 3;
+  if (zoom >= 12) return 8;
+  if (zoom >= 10) return 25;
+  if (zoom >= 8) return 80;
+  if (zoom >= 6) return 250;
+  return 500;
 }
 
 const SPOTIFY_TRACK_RE =
@@ -111,21 +165,16 @@ function normalizeArtistName(name: string): string {
 
 type FilterKey = "all" | "artist" | "venue" | "event" | "live";
 
-const FILTERS: {
-  key: FilterKey;
-  label: string;
-  icon: typeof Users;
-  badge?: string;
-}[] = [
+const FILTERS: { key: FilterKey; label: string; icon: typeof Users }[] = [
   { key: "artist", label: "Artists", icon: Users },
-  { key: "live", label: "Live Tonight", icon: CalendarClock, badge: "JAMBASE" },
-  { key: "venue", label: "Venues", icon: TrendingUp },
-  { key: "all", label: "All", icon: Music4 },
+  { key: "live",   label: "Live Tonight", icon: CalendarClock },
+  { key: "venue",  label: "Venues", icon: TrendingUp },
+  { key: "all",    label: "All", icon: Music4 },
 ];
 
 
 export default function MapShell() {
-  const { data, isLoading } = useGetMapPins();
+  const { data, isLoading } = useGetMapPins({ query: { staleTime: 60_000, gcTime: 5 * 60_000 } });
   const { user, signOut } = useAuth();
   const { toast } = useToast();
   const [authOpen, setAuthOpen] = useState(false);
@@ -138,6 +187,10 @@ export default function MapShell() {
 
   // Heatmap overlay toggle
   const [showHeatmap, setShowHeatmap] = useState(false);
+  const toggleHeatmap = useCallback((v: boolean) => {
+    setShowHeatmap(v);
+    if (!v) setHeatClickResult(null);
+  }, []);
 
   // Load user's city for local filtering
   const { data: profile } = useGetProfile(user?.id ?? "", {
@@ -157,8 +210,8 @@ export default function MapShell() {
     },
   });
 
-  // Map center — read from sessionStorage so re-visiting the page starts at the same spot.
-  const [mapCenter] = useState<[number, number]>(() => {
+  // Map center — initial from sessionStorage; updated live as user pans/zooms.
+  const [mapCenter, setMapCenter] = useState<[number, number]>(() => {
     try {
       const lat = parseFloat(sessionStorage.getItem("sp_geo_lat") ?? "");
       const lng = parseFloat(sessionStorage.getItem("sp_geo_lng") ?? "");
@@ -166,6 +219,8 @@ export default function MapShell() {
     } catch {}
     return [20, 0]; // neutral world center until geolocation resolves
   });
+  // Live zoom level — used to scope vibe search results to the visible area.
+  const [mapZoom, setMapZoom] = useState(12);
 
   // Request the browser's real location on mount; cache it so next visit is instant.
   useEffect(() => {
@@ -221,27 +276,52 @@ export default function MapShell() {
   const [vibeLoading, setVibeLoading] = useState(false);
   const [vibeSearched, setVibeSearched] = useState(false);
   const [cyaniteAnalysis, setCyaniteAnalysis] = useState<CyaniteAnalysis | null>(null);
+  const [vibeMatchedArtists, setVibeMatchedArtists] = useState<VibeMatchedArtist[]>([]);
   const [artistStats, setArtistStats] = useState<ArtistStats | null>(null);
   const [artistStatsLoading, setArtistStatsLoading] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mapRef = useRef<MapHandle>(null);
+  // Keep a ref to the live map center so the vibe search always uses the current viewport
+  const mapCenterRef = useRef<[number, number]>(mapCenter);
 
   // Heatmap data from Songstats-weighted /api/map/heatmap
-  const [heatPoints, setHeatPoints] = useState<HeatPoint[]>([]);
+  const [heatArtists, setHeatArtists] = useState<HeatArtist[]>([]);
   const [heatLoading, setHeatLoading] = useState(false);
+  const [heatClickResult, setHeatClickResult] = useState<HeatClickResult | null>(null);
+
+  const heatPoints = useMemo<HeatPoint[]>(
+    () => heatArtists.map((a) => [a.lat, a.lng, a.traction]),
+    [heatArtists],
+  );
 
   useEffect(() => {
     if (!showHeatmap) return;
-    if (heatPoints.length > 0) return; // already loaded
+    if (heatArtists.length > 0) return; // already loaded
     setHeatLoading(true);
     fetch("/api/map/heatmap")
-      .then((r) => r.json() as Promise<{ points: Array<{ lat: number; lng: number; traction: number }> }>)
-      .then((d) => {
-        setHeatPoints((d.points ?? []).map((p) => [p.lat, p.lng, p.traction] as HeatPoint));
-      })
+      .then((r) => r.json() as Promise<{ points: HeatArtist[] }>)
+      .then((d) => setHeatArtists(d.points ?? []))
       .catch(() => {})
       .finally(() => setHeatLoading(false));
-  }, [showHeatmap, heatPoints.length]);
+  }, [showHeatmap, heatArtists.length]);
+
+  const handleHeatClick = useCallback((lat: number, lng: number, zoom: number) => {
+    if (heatArtists.length === 0) return;
+    const radiusKm = zoomToRadiusKm(zoom);
+    const nearby = heatArtists
+      .map((a) => ({ ...a, distanceKm: Math.round(haversineKm(lat, lng, a.lat, a.lng)) }))
+      .filter((a) => a.distanceKm <= radiusKm)
+      .sort((a, b) => {
+        // Primary: traction (higher = more prominent in the heat)
+        // Secondary: distance (closer first within same traction tier)
+        const tierA = Math.floor(a.traction * 5);
+        const tierB = Math.floor(b.traction * 5);
+        if (tierB !== tierA) return tierB - tierA;
+        return a.distanceKm - b.distanceKm;
+      })
+      .slice(0, 25);
+    setHeatClickResult({ lat, lng, zoom, radiusKm, artists: nearby });
+  }, [heatArtists]);
 
   // Enriched images keyed by pin id — filled lazily from Deezer for pins with no imageUrl
   const [enrichedImages, setEnrichedImages] = useState<Record<string, string>>({});
@@ -328,6 +408,9 @@ export default function MapShell() {
   // Fetch JamBase live pins when bounds change (Local mode — viewport scoped)
   const handleBoundsChange = useCallback((bounds: MapBounds) => {
     boundsRef.current = bounds;
+    setMapZoom(bounds.zoom);
+    setMapCenter([bounds.centerLat, bounds.centerLng]);
+    mapCenterRef.current = [bounds.centerLat, bounds.centerLng];
     if (globalMode) return; // Global mode fetches worldwide hubs separately
     if (jbDebounceRef.current) clearTimeout(jbDebounceRef.current);
     jbDebounceRef.current = setTimeout(async () => {
@@ -410,23 +493,33 @@ export default function MapShell() {
     return () => { cancelled = true; };
   }, [query]);
 
-  // Debounced vibe search
+  // Debounced vibe/tag search — runs in both normal and lyricsMode.
+  // Spotify-link analysis is lyricsMode-only (slow + credits); tag search always runs.
   useEffect(() => {
-    if (!lyricsMode) { setVibeResults([]); setVibeSearched(false); setCyaniteAnalysis(null); return; }
     if (debounceRef.current) clearTimeout(debounceRef.current);
     const q = query.trim();
-    if (!q) { setVibeResults([]); setVibeSearched(false); setCyaniteAnalysis(null); return; }
-    setVibeLoading(true);
+    if (!q) { setVibeResults([]); setVibeSearched(false); setCyaniteAnalysis(null); setVibeMatchedArtists([]); return; }
     const spotify = isSpotifyLink(q);
+    // Spotify analysis only available in lyricsMode
+    if (spotify && !lyricsMode) return;
+    setVibeLoading(true);
+    // Pass the live map center (not initial state) so proximity sorts to where you're looking
+    const [userLat, userLng] = mapCenterRef.current;
+    const hasLocation = !(userLat === 20 && userLng === 0); // default world-center = no real location yet
+    const locationParams = hasLocation ? `&lat=${userLat}&lng=${userLng}` : "";
+
     debounceRef.current = setTimeout(async () => {
       if (spotify) {
+        // Spotify track URL → Cyanite audio analysis + tag-matched ScenePulse artists
         try {
-          const res = await fetch(`/api/cyanite/from-spotify?url=${encodeURIComponent(q)}`);
+          const res = await fetch(`/api/cyanite/from-spotify?url=${encodeURIComponent(q)}${locationParams}`);
           const json = (await res.json()) as {
             analysis?: CyaniteAnalysis;
             similarTracks?: { artistName: string; trackName: string; title: string }[];
+            matchedArtists?: VibeMatchedArtist[];
           };
           setCyaniteAnalysis(json.analysis ?? null);
+          setVibeMatchedArtists(json.matchedArtists ?? []);
           setVibeResults(
             (json.similarTracks ?? []).map((t, i) => ({
               trackId: i + 1,
@@ -435,14 +528,16 @@ export default function MapShell() {
               albumName: "",
             })),
           );
-        } catch { setVibeResults([]); setCyaniteAnalysis(null); }
+        } catch { setVibeResults([]); setCyaniteAnalysis(null); setVibeMatchedArtists([]); }
       } else {
+        // Text search → keyword-based tag matching against ScenePulse artists
         setCyaniteAnalysis(null);
+        setVibeResults([]);
         try {
-          const res = await fetch(`/api/musixmatch/search?q=${encodeURIComponent(q)}`);
-          const json = (await res.json()) as { tracks?: MxTrack[] };
-          setVibeResults(json.tracks ?? []);
-        } catch { setVibeResults([]); }
+          const res = await fetch(`/api/cyanite/tag-search?q=${encodeURIComponent(q)}${locationParams}`);
+          const json = (await res.json()) as { matchedArtists?: VibeMatchedArtist[] };
+          setVibeMatchedArtists(json.matchedArtists ?? []);
+        } catch { setVibeMatchedArtists([]); }
       }
       setVibeLoading(false);
       setVibeSearched(true);
@@ -452,7 +547,7 @@ export default function MapShell() {
 
   const toggleLyricsMode = () => {
     setLyricsMode((m) => {
-      if (m) { setQuery(""); setVibeResults([]); setVibeSearched(false); }
+      if (m) { setQuery(""); setVibeResults([]); setVibeSearched(false); setVibeMatchedArtists([]); setCyaniteAnalysis(null); }
       return !m;
     });
   };
@@ -518,23 +613,28 @@ export default function MapShell() {
     [pins, jambaseArtistPins],
   );
 
-  // Global mode: combine JamBase-derived artists + venues (no app-DB worldwide dataset)
+  // Global mode: all app-DB pins (they have real registered lat/lng worldwide) plus
+  // JamBase venue pins from live events. Jambase performer pins are excluded —
+  // Jambase only records where a show is, not where the artist lives.
   const globalDerivedPins = useMemo<ScenePin[]>(() => {
     if (!globalMode) return [];
-    return [...jambaseArtistPins, ...jambaseVenuePins];
-  }, [globalMode, jambaseArtistPins, jambaseVenuePins]);
+    const appIds = new Set(pins.map((p) => p.id));
+    const newJbVenues = jambaseVenuePins.filter((v) => !appIds.has(v.id));
+    return [...pins, ...newJbVenues];
+  }, [globalMode, pins, jambaseVenuePins]);
 
   const visiblePins = useMemo(() => {
     let result: ScenePin[];
     if (globalMode) {
       result = globalDerivedPins;
     } else {
-      // Local mode: app-DB pins + JamBase performers + JamBase venues.
-      // Deduplicate JamBase entries that are already in the app DB.
+      // Local mode: app-DB pins + JamBase venue pins only.
+      // Jambase performer pins are intentionally excluded — Jambase only records
+      // where the show is, not where the artist lives, so placing performers at
+      // venue coordinates creates a misleading cluster at a single location.
       const appIds = new Set(pins.map((p) => p.id));
-      const newJbArtists = jambaseArtistPins.filter((a) => !appIds.has(a.id));
       const newJbVenues = jambaseVenuePins.filter((v) => !appIds.has(v.id));
-      result = [...pins, ...newJbArtists, ...newJbVenues];
+      result = [...pins, ...newJbVenues];
     }
 
     if (activeFilter === "live") return [];
@@ -548,12 +648,13 @@ export default function MapShell() {
       );
     }
     return result;
-  }, [pins, globalDerivedPins, jambaseArtistPins, jambaseVenuePins, activeFilter, query, lyricsMode, globalMode]);
+  }, [pins, globalDerivedPins, jambaseVenuePins, activeFilter, query, lyricsMode, globalMode]);
 
-  // Show JamBase event pins for "live", "all", and "venue" filters.
-  // Hidden for "artist" because performers are now shown as individual artist pins.
+  // Show JamBase event pins only for "live" and "all" filters.
+  // Hidden for "artist" and "venue" to avoid amber event pins stacking on top of
+  // teal venue pins at the same coordinates. Venue pins are already shown via visiblePins.
   const visibleJambasePins = useMemo(() => {
-    if (activeFilter === "artist" || activeFilter === "event") return [];
+    if (activeFilter !== "live" && activeFilter !== "all") return [];
     if (!lyricsMode && query.trim()) {
       const q = query.toLowerCase();
       return jambasePins.filter(
@@ -591,6 +692,9 @@ export default function MapShell() {
 
   const localMatches = vibeResults.filter((t) => localArtistNamesNorm.has(normalizeArtistName(t.artistName)));
 
+  // IDs of artists matched by Cyanite vibe analysis — highlighted on the map with a glow ring
+  const vibeHighlightIds = new Set(vibeMatchedArtists.map((a) => a.id));
+
   return (
     <div className="relative h-[100dvh] w-full overflow-hidden">
       <div className="absolute inset-0">
@@ -613,59 +717,69 @@ export default function MapShell() {
           mapStyle={mapStyle}
           showHeatmap={showHeatmap}
           globalMode={globalMode}
+          highlightedPinIds={vibeHighlightIds.size > 0 ? vibeHighlightIds : undefined}
           onKaraoke={setKaraokePin}
           onBoundsChange={handleBoundsChange}
           onSetlistOpen={(id, name) => setSetlistVenue({ id, name })}
+          onHeatClick={handleHeatClick}
         />
       </div>
 
       {/* Top overlay */}
       <div className="pointer-events-none absolute inset-x-0 top-0 z-[1000] p-3 sm:p-4">
-        <div className="mx-auto flex max-w-7xl items-start justify-between gap-2 sm:gap-3">
+        <div className="mx-auto flex max-w-7xl items-start justify-between gap-3">
 
-          {/* Left: search + filters + vibe results */}
-          <div className="flex w-full max-w-xl flex-col gap-2 sm:gap-3 min-w-0">
+          {/* Left: search + toggles + filters + results */}
+          <div className="flex w-full max-w-md flex-col gap-2 min-w-0">
 
             {/* Search bar */}
             <div
               className={cn(
-                "pointer-events-auto flex items-center gap-2 rounded-2xl border px-3 py-2 shadow-xl transition-all duration-300",
-                lyricsMode ? "glass border-primary/40 shadow-primary/20" : "glass border-white/10",
+                "pointer-events-auto flex items-center gap-2 rounded-2xl border px-3 h-11 shadow-xl transition-all duration-300",
+                mapStyle === "satellite"
+                  ? lyricsMode
+                    ? "glass-satellite border-primary/50 shadow-primary/10"
+                    : "glass-satellite"
+                  : lyricsMode
+                    ? "glass border-primary/40 shadow-primary/10"
+                    : "glass border-white/10",
               )}
             >
               {vibeLoading ? (
                 <div className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-primary border-t-transparent" />
               ) : (
-                <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
+                <Search className={cn("h-4 w-4 shrink-0", mapStyle === "satellite" ? "text-white/50" : "text-muted-foreground")} />
               )}
               <Input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder={lyricsMode ? "Type a vibe, mood, or paste lyrics…" : "Search artists, venues, shows…"}
-                className="h-7 sm:h-8 border-0 bg-transparent px-0 shadow-none focus-visible:ring-0 text-sm"
+                placeholder={lyricsMode ? "Genre, mood, or Spotify link…" : "Search artists, venues, shows…"}
+                className={cn("h-full flex-1 border-0 bg-transparent px-0 shadow-none focus-visible:ring-0 text-sm", mapStyle === "satellite" ? "text-white placeholder:text-white/40" : "placeholder:text-muted-foreground")}
               />
               {query && (
                 <button
                   onClick={() => { setQuery(""); setVibeResults([]); setVibeSearched(false); setArtistStats(null); }}
-                  className="shrink-0 text-muted-foreground hover:text-foreground"
+                  className="shrink-0 rounded-full p-0.5 text-muted-foreground hover:text-foreground transition-colors"
                 >
                   <X className="h-3.5 w-3.5" />
                 </button>
               )}
-              <Button
-                size="icon"
+              <div className="w-px h-5 bg-white/10 shrink-0" />
+              <button
                 onClick={toggleLyricsMode}
                 className={cn(
-                  "h-7 w-7 sm:h-8 sm:w-8 shrink-0 rounded-xl transition-all duration-200",
+                  "shrink-0 flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 text-xs font-semibold transition-all duration-200",
                   lyricsMode
-                    ? "bg-primary text-primary-foreground shadow-lg shadow-primary/40"
-                    : "bg-gradient-to-br from-primary to-secondary",
+                    ? "bg-primary/20 text-primary"
+                    : mapStyle === "satellite"
+                      ? "text-white/50 hover:text-white hover:bg-white/10"
+                      : "text-muted-foreground hover:text-foreground hover:bg-white/5",
                 )}
-                aria-label="Toggle vibe search"
-                title={lyricsMode ? "Exit vibe search" : "Search by lyric vibe or mood"}
+                title={lyricsMode ? "Exit vibe search" : "Search by genre, mood or vibe"}
               >
-                <Sparkles className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-              </Button>
+                <Sparkles className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Vibe</span>
+              </button>
             </div>
 
             {/* Spotify artist stats card — shown whenever a Spotify artist URL is pasted */}
@@ -770,19 +884,18 @@ export default function MapShell() {
               </div>
             )}
 
-            {/* Vibe mode hint */}
+            {/* Vibe mode hint — only shown when lyricsMode active with no query yet */}
             {lyricsMode && !query && (
-              <div className="pointer-events-none glass rounded-xl border border-primary/20 px-3 py-2">
-                <p className="text-xs text-primary font-medium mb-0.5">Vibe Search active</p>
-                <p className="text-[11px] text-muted-foreground">
-                  Type a mood like <span className="text-foreground">"heartbreak"</span>, paste lyrics, or drop a{" "}
-                  <span className="text-foreground">Spotify track link</span> to find similar artists.
+              <div className="pointer-events-none glass rounded-2xl border border-primary/20 px-3 py-2.5">
+                <p className="text-xs text-primary font-semibold mb-0.5">Vibe Search</p>
+                <p className="text-[11px] text-white/40 leading-relaxed">
+                  Type a mood, genre, or drop a Spotify track link to find similar artists nearby.
                 </p>
               </div>
             )}
 
-            {/* Vibe results panel */}
-            {lyricsMode && vibeSearched && (
+            {/* Vibe results panel — shows in normal search too when tag matches exist */}
+            {vibeSearched && (vibeMatchedArtists.length > 0 || vibeLoading || lyricsMode) && (
               <div
                 className="pointer-events-auto rounded-2xl border border-white/15 shadow-2xl overflow-hidden max-h-72 overflow-y-auto"
                 style={{ background: "rgba(12,10,22,0.96)", backdropFilter: "blur(16px)" }}
@@ -834,17 +947,139 @@ export default function MapShell() {
                     )}
                   </div>
                 )}
-                {vibeResults.length === 0 ? (
+
+                {/* Tag-matched ScenePulse artists — grouped by proximity, scoped to zoom */}
+                {vibeMatchedArtists.length > 0 && (() => {
+                  // Zoom → max radius so results scope to what's actually visible on the map
+                  const zoomRadius = (z: number): number => {
+                    if (z >= 14) return 2;    // neighborhood
+                    if (z >= 12) return 15;   // city
+                    if (z >= 10) return 60;   // metro
+                    if (z >= 8)  return 250;  // state / region
+                    if (z >= 6)  return 1000; // country
+                    return Infinity;          // world
+                  };
+                  const zoomLabel = (z: number): string => {
+                    if (z >= 14) return "Neighborhood";
+                    if (z >= 12) return "City";
+                    if (z >= 10) return "Metro";
+                    if (z >= 8)  return "State / Region";
+                    if (z >= 6)  return "Country";
+                    return "Worldwide";
+                  };
+                  const maxKm = zoomRadius(mapZoom);
+                  // Artists without distanceKm (no user location) always show
+                  const scoped = vibeMatchedArtists.filter(
+                    (a) => a.distanceKm === null || a.distanceKm <= maxKm,
+                  );
+                  // Group by proximityLabel, preserving insertion order (already sorted nearby-first)
+                  const groups: { label: string; artists: VibeMatchedArtist[] }[] = [];
+                  for (const artist of scoped) {
+                    const last = groups[groups.length - 1];
+                    if (last && last.label === artist.proximityLabel) {
+                      last.artists.push(artist);
+                    } else {
+                      groups.push({ label: artist.proximityLabel, artists: [artist] });
+                    }
+                  }
+                  return (
+                    <div className="border-b border-white/10">
+                      <div className="flex items-center gap-1.5 px-3 pt-3 pb-2">
+                        <MapPin className="h-3.5 w-3.5 text-primary" />
+                        <span className="text-xs font-semibold text-white">
+                          {scoped.length} artists · {zoomLabel(mapZoom)}
+                        </span>
+                        {maxKm !== Infinity && (
+                          <span className="ml-auto text-[9px] text-white/30">within {maxKm < 1000 ? `${maxKm} km` : "1000+ km"}</span>
+                        )}
+                      </div>
+                      {scoped.length === 0 && (
+                        <p className="px-3 pb-3 text-xs text-white/40">No matches in this area — zoom out to see more</p>
+                      )}
+                      {groups.map((group) => (
+                        <div key={group.label}>
+                          <div className="px-3 py-1.5 flex items-center gap-2">
+                            <span className="text-[10px] font-bold uppercase tracking-widest text-primary/70">{group.label}</span>
+                            {/* Show the actual km range for the bucket so users know the scale */}
+                            <span className="text-[9px] text-white/20">
+                              {group.label === "Walking distance" && "< 2 km"}
+                              {group.label === "Your city" && "2 – 15 km"}
+                              {group.label === "Greater metro" && "15 – 60 km"}
+                              {group.label === "Nearby cities" && "60 – 250 km"}
+                              {group.label === "Your country" && "250 – 1000 km"}
+                              {group.label === "Worldwide" && "1000+ km"}
+                            </span>
+                            <div className="flex-1 h-px bg-white/5" />
+                            <span className="text-[9px] text-white/20">{group.artists.length}</span>
+                          </div>
+                          <div className="divide-y divide-white/5">
+                            {group.artists.map((artist) => (
+                              <div key={artist.id} className="flex items-center gap-2.5 px-3 py-2.5 hover:bg-white/5 transition-colors">
+                                {artist.imageUrl ? (
+                                  <img src={artist.imageUrl} alt={artist.artistName} className="w-8 h-8 rounded-full object-cover shrink-0 border border-white/20" />
+                                ) : (
+                                  <div className="w-8 h-8 rounded-full shrink-0 bg-primary/25 flex items-center justify-center text-[13px] font-bold text-primary">
+                                    {artist.artistName.charAt(0).toUpperCase()}
+                                  </div>
+                                )}
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    <p className="text-sm font-semibold text-white truncate">{artist.artistName}</p>
+                                    {artist.distanceKm !== null && (
+                                      <span className="text-[10px] font-medium text-primary/60 shrink-0 bg-primary/10 px-1.5 py-0.5 rounded-full">
+                                        {artist.distanceKm < 1 ? "<1 km" : `${artist.distanceKm} km`}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="flex flex-wrap gap-1 mt-0.5">
+                                    {artist.city && <span className="text-[9px] text-white/40">{artist.city}</span>}
+                                    {artist.matchedTags.slice(0, 3).map((tag) => (
+                                      <span key={tag} className="text-[9px] px-1.5 py-0.5 rounded-full bg-primary/20 text-primary capitalize">{tag}</span>
+                                    ))}
+                                    {artist.matchedTags.length > 3 && (
+                                      <span className="text-[9px] text-white/30">+{artist.matchedTags.length - 3}</span>
+                                    )}
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-1.5 shrink-0">
+                                  {artist.latitude && artist.longitude && (
+                                    <button
+                                      onClick={() => mapRef.current?.flyTo(artist.latitude!, artist.longitude!)}
+                                      className="flex items-center gap-1 rounded-full bg-primary/20 px-2 py-1 text-[11px] font-semibold text-primary hover:bg-primary/40 transition-colors"
+                                    >
+                                      <MapPin className="h-2.5 w-2.5" />
+                                      Find
+                                    </button>
+                                  )}
+                                  <a
+                                    href={`/artists/${artist.id}`}
+                                    className="flex items-center gap-1 rounded-full bg-white/10 px-2 py-1 text-[11px] text-white/70 hover:text-white hover:bg-white/20 transition-colors"
+                                  >
+                                    View
+                                  </a>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
+
+                {vibeResults.length === 0 && vibeMatchedArtists.length === 0 ? (
                   <div className="flex flex-col items-center gap-2 py-6 text-center px-4">
                     <Music2 className="h-7 w-7 text-white/20" />
                     <p className="text-sm text-white/60">
-                      {cyaniteAnalysis ? "No similar artists found" : "No tracks found for this vibe"}
+                      {cyaniteAnalysis ? "No matching artists found" : "No artists found for this vibe"}
                     </p>
                     <p className="text-xs text-white/30">
-                      {cyaniteAnalysis ? "Try a different track" : "Try a different mood or fewer lyrics"}
+                      {cyaniteAnalysis
+                        ? "Artists need genres/moods set in their profile to appear here"
+                        : "Try genre names like \"dark trap\", \"indie folk\", \"lofi beats\""}
                     </p>
                   </div>
-                ) : (
+                ) : vibeResults.length === 0 ? null : (
                   <>
                     <div className="flex items-center justify-between px-3 pt-3 pb-2 border-b border-white/10">
                       <div className="flex items-center gap-1.5">
@@ -896,102 +1131,230 @@ export default function MapShell() {
             {!lyricsMode && (
               <div className="pointer-events-auto flex flex-col gap-2">
 
-                {/* Toggle row — Local and Heatmap */}
-                <div className="glass border border-white/10 rounded-2xl px-3 py-2 flex items-center gap-4 shadow-lg w-fit">
-                  {/* Local / Global */}
-                  <label className="flex items-center gap-2 cursor-pointer select-none">
-                    {globalMode
-                      ? <Globe className="h-3.5 w-3.5 text-secondary shrink-0" />
-                      : <LocateFixed className="h-3.5 w-3.5 text-primary shrink-0" />
-                    }
-                    <span className={cn(
-                      "text-xs font-semibold transition-colors",
-                      globalMode ? "text-secondary" : "text-primary",
-                    )}>
-                      {globalMode ? "Global" : "Local"}
-                    </span>
-                    <Switch
-                      checked={!globalMode}
-                      onCheckedChange={(v) => setGlobalMode(!v)}
-                      className="data-[state=checked]:bg-primary data-[state=unchecked]:bg-secondary/50"
-                    />
-                  </label>
-
-                  <div className="w-px h-4 bg-white/10 shrink-0" />
-
-                  {/* Heatmap */}
-                  <label className="flex items-center gap-2 cursor-pointer select-none">
-                    <Flame className={cn(
-                      "h-3.5 w-3.5 shrink-0 transition-colors",
-                      showHeatmap ? "text-orange-400" : "text-muted-foreground",
-                    )} />
-                    <div className="flex flex-col leading-none">
+                {/* Control strip — Local/Global · Traction */}
+                <div className="flex items-center gap-2">
+                  <div className={cn("border rounded-2xl h-10 px-3 flex items-center gap-3 shadow-lg", mapStyle === "satellite" ? "glass-satellite" : "glass border-white/10")}>
+                    {/* Local / Global toggle */}
+                    <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                      {globalMode
+                        ? <Globe className="h-3.5 w-3.5 text-secondary shrink-0" />
+                        : <LocateFixed className="h-3.5 w-3.5 text-primary shrink-0" />
+                      }
                       <span className={cn(
                         "text-xs font-semibold transition-colors",
-                        showHeatmap ? "text-orange-400" : "text-muted-foreground",
+                        globalMode ? "text-secondary" : "text-primary",
+                      )}>
+                        {globalMode ? "Global" : "Local"}
+                      </span>
+                      <Switch
+                        checked={!globalMode}
+                        onCheckedChange={(v) => setGlobalMode(!v)}
+                        className="scale-90 data-[state=checked]:bg-primary data-[state=unchecked]:bg-secondary/40"
+                      />
+                    </label>
+
+                    <div className="w-px h-4 bg-white/10 shrink-0" />
+
+                    {/* Traction heatmap toggle */}
+                    <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                      <Flame className={cn(
+                        "h-3.5 w-3.5 shrink-0 transition-colors",
+                        showHeatmap ? "text-orange-400" : mapStyle === "satellite" ? "text-white/50" : "text-muted-foreground",
+                      )} />
+                      <span className={cn(
+                        "text-xs font-semibold transition-colors",
+                        showHeatmap ? "text-orange-400" : mapStyle === "satellite" ? "text-white/50" : "text-muted-foreground",
                       )}>
                         Traction
                       </span>
-                      {showHeatmap && (
-                        <span className="text-[9px] text-orange-400/60 uppercase tracking-wide">Spotify listeners</span>
-                      )}
-                    </div>
-                    <Switch
-                      checked={showHeatmap}
-                      onCheckedChange={setShowHeatmap}
-                      className="data-[state=checked]:bg-orange-500 data-[state=unchecked]:bg-input"
-                    />
-                  </label>
+                      <Switch
+                        checked={showHeatmap}
+                        onCheckedChange={toggleHeatmap}
+                        className="scale-90 data-[state=checked]:bg-orange-500 data-[state=unchecked]:bg-input"
+                      />
+                    </label>
+                  </div>
                 </div>
 
-                {/* Category filter — segmented toggle buttons */}
+                {/* Heatmap click results panel */}
+                {showHeatmap && heatClickResult && (
+                  <div
+                    className="pointer-events-auto rounded-2xl border border-orange-500/25 shadow-2xl overflow-hidden max-h-80 flex flex-col"
+                    style={{ background: "rgba(18,10,6,0.96)", backdropFilter: "blur(16px)" }}
+                  >
+                    {/* Header */}
+                    <div className="flex items-center justify-between px-3 pt-3 pb-2 border-b border-orange-500/15 shrink-0">
+                      <div className="flex items-center gap-1.5">
+                        <Flame className="h-3.5 w-3.5 text-orange-400" />
+                        <span className="text-xs font-semibold text-white">
+                          {heatClickResult.artists.length > 0
+                            ? `${heatClickResult.artists.length} artist${heatClickResult.artists.length === 1 ? "" : "s"} within ${heatClickResult.radiusKm < 1000 ? `${heatClickResult.radiusKm} km` : `${Math.round(heatClickResult.radiusKm / 100) / 10}k km`}`
+                            : "No artists in this area"}
+                        </span>
+                        <span className="text-[9px] text-orange-400/50 uppercase tracking-widest">Traction</span>
+                      </div>
+                      <button
+                        onClick={() => setHeatClickResult(null)}
+                        className="text-white/30 hover:text-white transition-colors"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+
+                    {heatClickResult.artists.length === 0 ? (
+                      <div className="flex flex-col items-center gap-2 py-6 text-center px-4">
+                        <Flame className="h-6 w-6 text-orange-400/20" />
+                        <p className="text-sm text-white/40">No artists registered here</p>
+                        <p className="text-xs text-white/20">
+                          {heatClickResult.zoom < 8
+                            ? "Zoom in and click again for a smaller area"
+                            : "Try clicking on a brighter part of the heatmap"}
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="overflow-y-auto divide-y divide-white/5">
+                        {heatClickResult.artists.map((artist) => {
+                          const intensity = artist.traction;
+                          const intensityColor =
+                            intensity >= 0.8 ? "#f59e0b" :
+                            intensity >= 0.5 ? "#10b981" :
+                            intensity >= 0.3 ? "#3b82f6" : "#8b5cf6";
+                          const intensityLabel =
+                            intensity >= 0.8 ? "Blowing up" :
+                            intensity >= 0.5 ? "Rising fast" :
+                            intensity >= 0.3 ? "Active scene" : "Local artist";
+                          return (
+                            <div
+                              key={artist.artistId}
+                              className="flex items-center gap-2.5 px-3 py-2.5 hover:bg-white/5 transition-colors"
+                            >
+                              {artist.imageUrl ? (
+                                <img
+                                  src={artist.imageUrl}
+                                  alt={artist.artistName}
+                                  className="w-9 h-9 rounded-full object-cover shrink-0 border border-white/10"
+                                />
+                              ) : (
+                                <div
+                                  className="w-9 h-9 rounded-full shrink-0 flex items-center justify-center text-sm font-bold text-white"
+                                  style={{ background: `${intensityColor}33` }}
+                                >
+                                  {artist.artistName.charAt(0).toUpperCase()}
+                                </div>
+                              )}
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <p className="text-sm font-semibold text-white truncate">{artist.artistName}</p>
+                                  <span
+                                    className="text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full"
+                                    style={{ color: intensityColor, background: `${intensityColor}22` }}
+                                  >
+                                    {intensityLabel}
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-2 mt-0.5">
+                                  {artist.city && (
+                                    <span className="text-[10px] text-white/40 truncate">{artist.city}</span>
+                                  )}
+                                  {artist.distanceKm !== undefined && (
+                                    <span className="text-[10px] text-white/25 shrink-0">
+                                      {artist.distanceKm < 1 ? "<1" : artist.distanceKm} km away
+                                    </span>
+                                  )}
+                                  {artist.monthlyListeners != null && (
+                                    <span className="text-[10px] text-white/30 shrink-0">
+                                      {fmtNum(artist.monthlyListeners)} listeners
+                                    </span>
+                                  )}
+                                </div>
+                                {artist.genre && (
+                                  <span className="text-[9px] text-white/30 capitalize">{artist.genre}</span>
+                                )}
+                              </div>
+                              <div className="flex flex-col gap-1 shrink-0">
+                                <Link
+                                  href={`/artists/${artist.artistId}`}
+                                  className="flex items-center gap-1 rounded-lg bg-white/10 px-2 py-1 text-[10px] text-white/60 hover:text-white hover:bg-white/20 transition-colors"
+                                >
+                                  View
+                                </Link>
+                                {artist.lat && artist.lng && (
+                                  <button
+                                    onClick={() => mapRef.current?.flyTo(artist.lat, artist.lng, Math.max(heatClickResult.zoom, 12))}
+                                    className="flex items-center gap-1 rounded-lg bg-orange-500/20 px-2 py-1 text-[10px] text-orange-300 hover:bg-orange-500/30 transition-colors"
+                                  >
+                                    <MapPin className="h-2.5 w-2.5" /> Fly
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Heatmap hint when active but no click yet */}
+                {showHeatmap && !heatClickResult && !heatLoading && heatArtists.length > 0 && (
+                  <div className="pointer-events-none glass rounded-xl border border-orange-500/20 px-3 py-2">
+                    <p className="text-[11px] text-orange-400/80">
+                      <Flame className="h-3 w-3 inline mr-1 mb-0.5" />
+                      Tap anywhere on the map to see artists in that area
+                    </p>
+                  </div>
+                )}
+
+                {/* Category filters + ID button */}
                 {!showHeatmap && (
-                  <div className="flex overflow-x-auto gap-1.5 scrollbar-none pb-0.5">
+                  <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none pb-0.5">
                     {FILTERS.map((f) => {
                       const Icon = f.icon;
                       const active = activeFilter === f.key;
+                      const isLive = f.key === "live";
                       return (
                         <button
                           key={f.key}
                           onClick={() => setActiveFilter(f.key)}
                           className={cn(
-                            "shrink-0 flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-semibold shadow-md transition-all duration-150",
+                            "shrink-0 flex items-center gap-1.5 rounded-full border h-8 px-3 text-xs font-semibold transition-all duration-150",
                             active
-                              ? f.key === "live"
-                                ? "border-amber-500/60 bg-amber-500/20 text-amber-300 shadow-amber-500/10"
-                                : "border-primary/60 bg-primary/20 text-foreground shadow-primary/10"
-                              : "glass border-white/10 text-muted-foreground hover:text-foreground hover:border-white/20",
+                              ? isLive
+                                ? "border-amber-500/50 bg-amber-500/15 text-amber-300"
+                                : "border-primary/50 bg-primary/15 text-primary"
+                              : mapStyle === "satellite"
+                                ? "glass-satellite text-white/50 hover:text-white hover:border-white/20"
+                                : "glass border-white/10 text-muted-foreground hover:text-foreground hover:border-white/20",
                           )}
                         >
-                          {f.key === "live" && active && (
-                            <span className="h-1.5 w-1.5 rounded-full bg-amber-400 animate-pulse" />
+                          {isLive && (
+                            <span className={cn(
+                              "h-1.5 w-1.5 rounded-full shrink-0 transition-colors",
+                              active ? "bg-amber-400 animate-pulse" : "bg-muted-foreground/40",
+                            )} />
                           )}
                           <Icon className="h-3.5 w-3.5 shrink-0" />
                           <span>{f.label}</span>
-                          {f.badge && (
-                            <span className="hidden sm:inline rounded-md bg-foreground/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-foreground/70">
-                              {f.badge}
-                            </span>
-                          )}
                         </button>
                       );
                     })}
 
-                    {/* Fingerprint button */}
+                    <div className="w-px h-4 bg-white/10 shrink-0" />
+
+                    {/* ID this song */}
                     <button
                       onClick={() => setFingerprintOpen(true)}
                       className={cn(
-                        "shrink-0 flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-semibold shadow-md transition-all duration-150",
+                        "shrink-0 flex items-center gap-1.5 rounded-full border h-8 px-3 text-xs font-semibold transition-all duration-150",
                         fingerprintOpen
-                          ? "border-secondary/60 bg-secondary/20 text-foreground"
-                          : "glass border-white/10 text-muted-foreground hover:text-foreground hover:border-white/20",
+                          ? "border-secondary/50 bg-secondary/15 text-secondary"
+                          : mapStyle === "satellite"
+                            ? "glass-satellite text-white/50 hover:text-white hover:border-white/20"
+                            : "glass border-white/10 text-muted-foreground hover:text-foreground hover:border-white/20",
                       )}
                     >
                       <Fingerprint className="h-3.5 w-3.5 shrink-0" />
                       <span>ID this song</span>
-                      <span className="hidden sm:inline rounded-md bg-foreground/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-foreground/70">
-                        LIVE
-                      </span>
                     </button>
                   </div>
                 )}
@@ -999,47 +1362,53 @@ export default function MapShell() {
               </div>
             )}
 
-            {/* Exit vibe mode row */}
+            {/* Vibe mode action row */}
             {lyricsMode && (
-              <div className="pointer-events-auto flex items-center gap-2">
-                <button
-                  onClick={toggleLyricsMode}
-                  className="flex items-center gap-1.5 rounded-full glass border border-white/10 px-3 py-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
-                >
-                  <X className="h-3 w-3" />
-                  Exit vibe search
-                </button>
-                <button
-                  onClick={() => setFingerprintOpen(true)}
-                  className="flex items-center gap-1.5 rounded-full glass border border-white/10 px-3 py-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
-                >
-                  <Fingerprint className="h-3 w-3" />
-                  ID a song instead
-                </button>
+              <div className="pointer-events-auto flex items-center gap-1.5">
+                {[
+                  { onClick: toggleLyricsMode, icon: <X className="h-3 w-3" />, label: "Exit vibe search" },
+                  { onClick: () => setFingerprintOpen(true), icon: <Fingerprint className="h-3 w-3" />, label: "ID a song" },
+                ].map(({ onClick, icon, label }) => (
+                  <button
+                    key={label}
+                    onClick={onClick}
+                    className={cn(
+                      "flex items-center gap-1.5 rounded-full border h-8 px-3 text-xs transition-all hover:border-white/20",
+                      mapStyle === "satellite"
+                        ? "glass-satellite text-white/50 hover:text-white"
+                        : "glass border-white/10 text-muted-foreground hover:text-foreground",
+                    )}
+                  >
+                    {icon}
+                    {label}
+                  </button>
+                ))}
               </div>
             )}
           </div>
 
-          {/* Right controls */}
-          <div className="pointer-events-auto flex items-center gap-1.5 sm:gap-2 shrink-0">
-            {/* Map style toggle — cycles auto ↔ satellite like ThemeToggle */}
+          {/* Right controls — all icon buttons share the same glass pill style */}
+          <div className="pointer-events-auto flex items-center gap-1.5 shrink-0">
             <Button
               variant="ghost"
               size="icon"
               onClick={() => setMapStyle((s) => s === "satellite" ? "auto" : "satellite")}
               className={cn(
-                "h-11 w-11 rounded-2xl glass border border-white/10 transition-all duration-200 hover:border-primary/50 hover:text-primary active:scale-90",
-                mapStyle === "satellite" && "border-primary/50 text-primary",
+                "h-11 w-11 rounded-2xl border transition-all duration-200 hover:border-primary/50 active:scale-90",
+                mapStyle === "satellite"
+                  ? "glass-satellite text-white/70 hover:text-white border-primary/60"
+                  : "glass border-white/10 hover:text-primary",
               )}
               aria-label={mapStyle === "satellite" ? "Switch to default map" : "Switch to satellite"}
             >
               {mapStyle === "satellite"
-                ? <Map className="h-5 w-5 transition-transform duration-300" />
-                : <Satellite className="h-5 w-5 transition-transform duration-300" />
+                ? <Map className="h-5 w-5" />
+                : <Satellite className="h-5 w-5" />
               }
             </Button>
-            <ThemeToggle />
+            <ThemeToggle satellite={mapStyle === "satellite"} />
             <NotificationsMenu
+              satellite={mapStyle === "satellite"}
               liveEvents={jambasePins.slice(0, 4).map((p) => ({
                 id: p.id,
                 name: p.name,
@@ -1052,10 +1421,11 @@ export default function MapShell() {
             {user ? (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <button className="rounded-2xl ring-2 ring-white/10 transition hover:ring-primary/50">
-                    <Avatar className="h-9 w-9 sm:h-11 sm:w-11">
-                      <AvatarFallback className="bg-gradient-to-br from-primary to-secondary text-white text-sm">
-                        {(user.email ?? "U").charAt(0).toUpperCase()}
+                  <button className={cn("rounded-2xl ring-2 transition-all duration-200 active:scale-95", mapStyle === "satellite" ? "ring-white/25" : "ring-white/10")}>
+                    <Avatar className="h-11 w-11">
+                      <AvatarImage src={profile?.avatarUrl ?? undefined} alt={profile?.displayName ?? user.email ?? "Profile"} className="rounded-2xl object-cover" />
+                      <AvatarFallback className="bg-primary text-primary-foreground text-sm font-bold rounded-2xl">
+                        {(profile?.displayName ?? user.email ?? "U").charAt(0).toUpperCase()}
                       </AvatarFallback>
                     </Avatar>
                   </button>
@@ -1070,7 +1440,7 @@ export default function MapShell() {
             ) : (
               <Button
                 onClick={() => setAuthOpen(true)}
-                className="h-9 sm:h-11 rounded-2xl bg-gradient-to-br from-primary to-secondary px-3 sm:px-5 text-sm font-semibold shadow-lg shadow-primary/20 transition-all duration-200 hover:shadow-primary/40 hover:brightness-110 active:scale-95"
+                className="h-11 rounded-2xl bg-primary text-primary-foreground px-4 sm:px-5 text-sm font-semibold shadow-md hover:brightness-110 active:scale-95 transition-all duration-200"
               >
                 Sign in
               </Button>
@@ -1079,24 +1449,8 @@ export default function MapShell() {
         </div>
       </div>
 
-      {/* Status chips — bottom right */}
-      {/* Scene Radio — floating button bottom-left */}
-      <div className="pointer-events-none absolute bottom-24 left-4 z-[1000]">
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={() => setRadioActive((v) => !v)}
-          className={cn(
-            "pointer-events-auto h-11 w-11 rounded-2xl glass border border-white/10 transition-all duration-200 hover:border-primary/50 hover:text-primary active:scale-90",
-            radioActive && "border-primary/50 text-primary bg-primary/10",
-          )}
-          aria-label="Toggle Scene Radio"
-        >
-          <Radio className={cn("h-5 w-5", radioActive && "animate-pulse")} />
-        </Button>
-      </div>
-
-      <div className="pointer-events-none absolute bottom-4 sm:bottom-6 right-3 sm:right-4 z-[1000] flex flex-col items-end gap-2">
+      {/* Bottom-left: status / loading chips aligned under the search panel */}
+      <div className="pointer-events-none absolute bottom-4 sm:bottom-6 left-3 sm:left-4 z-[1000] flex flex-col items-start gap-2">
         {heatLoading && (
           <span className="flex items-center gap-1.5 rounded-full border border-orange-500/30 bg-orange-500/10 px-3 py-1 text-xs text-orange-300/90">
             <span className="h-3 w-3 animate-spin rounded-full border-2 border-orange-400 border-t-transparent" />
@@ -1144,6 +1498,25 @@ export default function MapShell() {
             Demo mode · accounts disabled
           </span>
         )}
+      </div>
+
+      {/* Bottom-right: Scene Radio button — stacks directly below zoom controls */}
+      <div className="pointer-events-none absolute bottom-4 sm:bottom-6 right-4 z-[1000] flex flex-col items-end">
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={() => setRadioActive((v) => !v)}
+          className={cn(
+            "pointer-events-auto h-11 w-11 rounded-2xl border transition-all duration-200 hover:border-primary/50 active:scale-90",
+            mapStyle === "satellite"
+              ? "glass-satellite text-white/70 hover:text-white"
+              : "glass border-white/10 hover:text-primary",
+            radioActive && "border-primary/50 !text-primary bg-primary/10",
+          )}
+          aria-label="Toggle Scene Radio"
+        >
+          <Radio className={cn("h-5 w-5", radioActive && "animate-pulse")} />
+        </Button>
       </div>
 
       <AuthDialog open={authOpen} onOpenChange={setAuthOpen} />

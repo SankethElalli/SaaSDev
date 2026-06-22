@@ -21,26 +21,29 @@ export interface LalalResult {
 
 /** Download audio from URL then upload raw binary to lalal.ai. Returns job id. */
 async function uploadBinary(audioUrl: string, trackTitle: string): Promise<string> {
+  logger.info({ audioUrl }, "Downloading audio for lalal.ai upload");
   const audioRes = await fetch(audioUrl);
   if (!audioRes.ok) throw new Error(`Failed to download audio: ${audioRes.status}`);
   const buffer = await audioRes.arrayBuffer();
+  logger.info({ bytes: buffer.byteLength }, "Audio downloaded, uploading to lalal.ai");
 
+  const filename = trackTitle.replace(/[^a-zA-Z0-9_-]/g, "_") + ".mp3";
   const res = await fetch(`${BASE}/upload/`, {
     method: "POST",
     headers: {
       "Content-Type": "application/octet-stream",
-      "Content-Disposition": `attachment; filename=${trackTitle.replace(/[^a-zA-Z0-9_-]/g, "_")}.mp3`,
+      "Content-Disposition": `attachment; filename=${filename}`,
       "X-License-Key": apiKey(),
     },
     body: buffer,
   });
 
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`lalal.ai upload failed ${res.status}: ${text}`);
-  }
+  const text = await res.text();
+  logger.info({ status: res.status, body: text }, "lalal.ai upload response");
 
-  const json = (await res.json()) as { id?: string; error?: string };
+  if (!res.ok) throw new Error(`lalal.ai upload failed ${res.status}: ${text}`);
+
+  const json = JSON.parse(text) as { id?: string; error?: string };
   if (!json.id) throw new Error(`lalal.ai upload: no id — ${json.error ?? "unknown"}`);
   return json.id;
 }
@@ -54,10 +57,9 @@ async function split(id: string, stem: string, splitter: string): Promise<void> 
     },
     body: JSON.stringify({ id, stem, splitter }),
   });
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`lalal.ai split failed ${res.status}: ${text}`);
-  }
+  const text = await res.text();
+  logger.info({ status: res.status, body: text, id, stem }, "lalal.ai split response");
+  if (!res.ok) throw new Error(`lalal.ai split failed ${res.status}: ${text}`);
 }
 
 async function getResult(id: string): Promise<LalalResult> {
@@ -173,21 +175,29 @@ export async function processStemsBackground(
       );
     }
   } catch (err) {
-    logger.error({ err, stemRequestId }, "lalal.ai processing failed");
+    const errMsg = err instanceof Error ? err.message : String(err);
+    logger.error({ err: errMsg, stemRequestId }, "lalal.ai processing failed");
 
-    await db
-      .update(trackStemRequestsTable)
-      .set({ status: "failed", updatedAt: new Date() })
-      .where(eq(trackStemRequestsTable.id, stemRequestId));
+    // Nested try so a DB/RLS error here doesn't hide the real error
+    try {
+      await db
+        .update(trackStemRequestsTable)
+        .set({ status: "failed", updatedAt: new Date() })
+        .where(eq(trackStemRequestsTable.id, stemRequestId));
+    } catch (dbErr) {
+      logger.error({ dbErr: String(dbErr), stemRequestId }, "Could not set status=failed — RLS likely blocking update");
+    }
 
     if (requesterProfileId) {
-      await notify(
-        requesterProfileId,
-        "stems_failed",
-        "Stem processing failed",
-        `Could not process ${stemType} stems from "${trackTitle}". Please try again.`,
-        { stemRequestId },
-      );
+      try {
+        await notify(
+          requesterProfileId,
+          "stems_failed",
+          "Stem processing failed",
+          errMsg,
+          { stemRequestId },
+        );
+      } catch { /* non-fatal */ }
     }
   }
 }

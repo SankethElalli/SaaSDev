@@ -1,5 +1,5 @@
-import { useState, useEffect } from "react";
-import { Scissors, Check, X, Download, Loader2, Music2 } from "lucide-react";
+import { useState, useEffect, useRef, useCallback } from "react";
+import { Scissors, Check, X, Download, Loader2, Music2, RefreshCw, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
@@ -14,8 +14,10 @@ interface StemRequest {
   ownerArtistId: string;
   status: string;
   stemType: string;
+  lalalJobId: string | null;
   message: string | null;
   createdAt: string;
+  updatedAt: string;
 }
 
 interface Stem {
@@ -34,23 +36,28 @@ const STATUS_LABELS: Record<string, { label: string; color: string }> = {
   failed:     { label: "Failed",    color: "text-destructive" },
 };
 
-function StemDownloads({ requestId }: { requestId: string }) {
-  const { session } = useAuth();
+const ACTIVE_STATUSES = new Set(["pending", "approved", "processing"]);
+
+function StemDownloads({ requestId, token }: { requestId: string; token?: string }) {
   const [stems, setStems] = useState<Stem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const token = session?.access_token;
     fetch(`/api/stem-requests/${requestId}/stems`, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     })
-      .then((r) => r.ok ? r.json() : [])
-      .then((data: Stem[]) => setStems(data))
-      .catch(() => {})
+      .then(async (r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json() as Promise<Stem[]>;
+      })
+      .then(setStems)
+      .catch((e) => setError(e instanceof Error ? e.message : String(e)))
       .finally(() => setLoading(false));
-  }, [requestId, session?.access_token]);
+  }, [requestId, token]);
 
   if (loading) return <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />;
+  if (error) return <span className="text-xs text-destructive">Could not load stems: {error}</span>;
   if (stems.length === 0) return <span className="text-xs text-muted-foreground">No stems yet</span>;
 
   return (
@@ -72,6 +79,16 @@ function StemDownloads({ requestId }: { requestId: string }) {
   );
 }
 
+function timeAgo(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diff / 60_000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
+}
+
 interface Props {
   artistId: string;
 }
@@ -81,25 +98,53 @@ export function StemRequestsPanel({ artistId }: Props) {
   const { toast } = useToast();
   const [requests, setRequests] = useState<StemRequest[]>([]);
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
   const [actionId, setActionId] = useState<string | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const token = session?.access_token;
 
-  const fetchRequests = () => {
+  const fetchRequests = useCallback(async (silent = false) => {
     if (!token) return;
-    fetch(`/api/artists/${artistId}/stem-requests`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-      .then((r) => r.ok ? r.json() : [])
-      .then((data: StemRequest[]) => setRequests(data))
-      .catch(() => {})
-      .finally(() => setLoading(false));
-  };
+    if (!silent) setLoading(true);
+    setFetchError(null);
+    try {
+      const res = await fetch(`/api/artists/${artistId}/stem-requests`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as { error?: string };
+        throw new Error(body.error ?? `HTTP ${res.status}`);
+      }
+      const data = await res.json() as StemRequest[];
+      setRequests(data);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setFetchError(msg);
+    } finally {
+      if (!silent) setLoading(false);
+    }
+  }, [artistId, token]);
 
+  // Initial fetch
   useEffect(() => {
     fetchRequests();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [artistId, token]);
+  }, [fetchRequests]);
+
+  // Auto-poll every 10s while any request is in an active state
+  useEffect(() => {
+    const hasActive = requests.some((r) => ACTIVE_STATUSES.has(r.status));
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+    if (hasActive) {
+      pollRef.current = setInterval(() => fetchRequests(true), 10_000);
+    }
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
+  }, [requests, fetchRequests]);
 
   const respond = async (id: string, status: "approved" | "declined") => {
     if (!token) return;
@@ -110,13 +155,22 @@ export function StemRequestsPanel({ artistId }: Props) {
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ status }),
       });
-      if (!res.ok) throw new Error("Failed");
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as { error?: string };
+        throw new Error(body.error ?? `HTTP ${res.status}`);
+      }
       toast({
-        title: status === "approved" ? "Stem request approved — processing started" : "Request declined",
+        title: status === "approved"
+          ? "Stem request approved — processing started"
+          : "Request declined",
       });
-      fetchRequests();
-    } catch {
-      toast({ title: "Could not update request", variant: "destructive" });
+      await fetchRequests(true);
+    } catch (e) {
+      toast({
+        title: "Could not update request",
+        description: e instanceof Error ? e.message : String(e),
+        variant: "destructive",
+      });
     } finally {
       setActionId(null);
     }
@@ -133,6 +187,20 @@ export function StemRequestsPanel({ artistId }: Props) {
     );
   }
 
+  if (fetchError) {
+    return (
+      <div className="flex flex-col gap-3 rounded-2xl border border-destructive/30 bg-destructive/5 p-4">
+        <div className="flex items-center gap-2 text-sm text-destructive">
+          <AlertTriangle className="h-4 w-4 shrink-0" />
+          Failed to load stem requests: {fetchError}
+        </div>
+        <Button size="sm" variant="outline" className="w-fit" onClick={() => fetchRequests()}>
+          <RefreshCw className="h-3.5 w-3.5 mr-1.5" /> Retry
+        </Button>
+      </div>
+    );
+  }
+
   if (requests.length === 0) {
     return (
       <div className="flex flex-col items-center gap-2 rounded-2xl border border-dashed border-white/10 py-8 text-center">
@@ -145,8 +213,29 @@ export function StemRequestsPanel({ artistId }: Props) {
     );
   }
 
+  const hasActive = requests.some((r) => ACTIVE_STATUSES.has(r.status));
+
   return (
     <div className="space-y-6">
+      {/* Header with refresh indicator */}
+      <div className="flex items-center justify-between">
+        <span className="text-xs text-muted-foreground">
+          {hasActive && (
+            <span className="flex items-center gap-1.5">
+              <Loader2 className="h-3 w-3 animate-spin" /> Auto-refreshing every 10s
+            </span>
+          )}
+        </span>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
+          onClick={() => fetchRequests()}
+        >
+          <RefreshCw className="h-3 w-3 mr-1" /> Refresh
+        </Button>
+      </div>
+
       {/* Incoming — requests others made for your tracks */}
       {incoming.length > 0 && (
         <div className="space-y-3">
@@ -157,6 +246,8 @@ export function StemRequestsPanel({ artistId }: Props) {
             const statusInfo = STATUS_LABELS[req.status] ?? { label: req.status, color: "text-muted-foreground" };
             const isPending = req.status === "pending";
             const isReady = req.status === "ready";
+            const isFailed = req.status === "failed";
+            const isProcessing = req.status === "processing" || req.status === "approved";
             const busy = actionId === req.id;
 
             return (
@@ -169,17 +260,28 @@ export function StemRequestsPanel({ artistId }: Props) {
                     <div className="flex items-center gap-2 flex-wrap">
                       <Music2 className="h-4 w-4 shrink-0 text-primary" />
                       <span className="text-sm font-semibold truncate">
-                        {req.trackTitle ?? "Track"}
+                        {req.trackTitle ?? "Unknown track"}
                       </span>
-                      <span className="text-xs px-1.5 py-0.5 rounded bg-white/10 capitalize">
-                        {req.stemType}
-                      </span>
-                      <span className={cn("text-xs font-medium", statusInfo.color)}>
+                      {req.stemType && (
+                        <span className="text-xs px-1.5 py-0.5 rounded bg-white/10 capitalize">
+                          {req.stemType}
+                        </span>
+                      )}
+                      <span className={cn("text-xs font-medium flex items-center gap-1", statusInfo.color)}>
+                        {isProcessing && <Loader2 className="h-3 w-3 animate-spin" />}
                         · {statusInfo.label}
                       </span>
                     </div>
                     {req.message && (
                       <p className="text-xs text-muted-foreground mt-1 ml-6">{req.message}</p>
+                    )}
+                    <p className="text-xs text-muted-foreground/50 mt-1 ml-6">
+                      Updated {timeAgo(req.updatedAt)}
+                    </p>
+                    {isFailed && (
+                      <p className="text-xs text-destructive/80 mt-1 ml-6">
+                        Processing failed — the audio file may be too large, unsupported, or the lalal.ai service is unavailable.
+                      </p>
                     )}
                   </div>
 
@@ -208,7 +310,7 @@ export function StemRequestsPanel({ artistId }: Props) {
                   )}
                 </div>
 
-                {isReady && <StemDownloads requestId={req.id} />}
+                {isReady && <StemDownloads requestId={req.id} token={token} />}
               </div>
             );
           })}
@@ -224,6 +326,8 @@ export function StemRequestsPanel({ artistId }: Props) {
           {outgoing.map((req) => {
             const statusInfo = STATUS_LABELS[req.status] ?? { label: req.status, color: "text-muted-foreground" };
             const isReady = req.status === "ready";
+            const isFailed = req.status === "failed";
+            const isProcessing = req.status === "processing" || req.status === "approved";
 
             return (
               <div
@@ -233,19 +337,27 @@ export function StemRequestsPanel({ artistId }: Props) {
                 <div className="flex items-center gap-2 flex-wrap">
                   <Music2 className="h-4 w-4 shrink-0 text-primary" />
                   <span className="text-sm font-semibold truncate">
-                    {req.trackTitle ?? "Track"}
+                    {req.trackTitle ?? "Unknown track"}
                   </span>
-                  <span className="text-xs px-1.5 py-0.5 rounded bg-white/10 capitalize">
-                    {req.stemType}
-                  </span>
-                  <span className={cn("text-xs font-medium", statusInfo.color)}>
+                  {req.stemType && (
+                    <span className="text-xs px-1.5 py-0.5 rounded bg-white/10 capitalize">
+                      {req.stemType}
+                    </span>
+                  )}
+                  <span className={cn("text-xs font-medium flex items-center gap-1", statusInfo.color)}>
+                    {isProcessing && <Loader2 className="h-3 w-3 animate-spin" />}
                     · {statusInfo.label}
                   </span>
-                  {(req.status === "approved" || req.status === "processing") && (
-                    <Loader2 className="h-3 w-3 animate-spin text-blue-400" />
-                  )}
                 </div>
-                {isReady && <StemDownloads requestId={req.id} />}
+                <p className="text-xs text-muted-foreground/50 ml-6">
+                  Updated {timeAgo(req.updatedAt)}
+                </p>
+                {isFailed && (
+                  <p className="text-xs text-destructive/80 ml-6">
+                    Processing failed — the track owner may need to re-approve or the audio format is unsupported.
+                  </p>
+                )}
+                {isReady && <StemDownloads requestId={req.id} token={token} />}
               </div>
             );
           })}

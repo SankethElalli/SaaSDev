@@ -7,13 +7,17 @@ import {
   useGetMyArtist,
   getGetMyArtistQueryKey,
   useCreateCollaborationRequest,
+  useListArtistCollaborations,
+  getListArtistCollaborationsQueryKey,
+  useUpdateCollaborationRequest,
 } from "@workspace/api-client-react";
-import { Link, useParams } from "wouter";
+import { Link, useParams, useSearch } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/auth";
 import { ArtistActions } from "@/components/artist/ArtistActions";
 import { SongstatsPanel } from "@/components/artist/SongstatsPanel";
-import { PublicTrackCard, type ArtistTrack } from "@/components/dashboard/TrackManager";
+import { PublicTrackCard, TrackManager, type ArtistTrack } from "@/components/dashboard/TrackManager";
+import { StemRequestsPanel } from "@/components/dashboard/StemRequestsPanel";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
@@ -33,6 +37,7 @@ import {
   UserCheck,
   Lock,
   Scissors,
+  Check,
 } from "lucide-react";
 
 const LINK_ICONS: Record<string, typeof Globe> = {
@@ -157,12 +162,12 @@ function CollabTab({ artistId, artistName }: { artistId: string; artistName: str
     },
   });
 
-  const createCollab = useCreateCollaborationRequest();
-  const [message, setMessage] = useState("");
-  const [sent, setSent] = useState(false);
+  const isOwnProfile = myArtist?.id === artistId;
 
-  // Tracks
+  // Public tracks (visible to all)
   const [tracks, setTracks] = useState<ArtistTrack[]>([]);
+  const [trackAdding, setTrackAdding] = useState(false);
+  const [trackDeletingId, setTrackDeletingId] = useState<string | null>(null);
   const [requestingId, setRequestingId] = useState<string | null>(null);
   const [requestedIds, setRequestedIds] = useState<Set<string>>(new Set());
 
@@ -173,23 +178,46 @@ function CollabTab({ artistId, artistName }: { artistId: string; artistName: str
       .catch(() => {});
   }, [artistId]);
 
-  const canCollab = profile?.role === "artist" && myArtist && myArtist.id !== artistId;
-  const isOwnProfile = myArtist?.id === artistId;
+  const handleAddTrack = async (input: { title: string; url: string }) => {
+    const token = session?.access_token;
+    if (!token) return;
+    setTrackAdding(true);
+    try {
+      const res = await fetch(`/api/artists/${artistId}/tracks`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify(input),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({})) as { error?: string };
+        throw new Error(err.error ?? "Failed");
+      }
+      const created = await res.json() as ArtistTrack;
+      setTracks((prev) => [...prev, created]);
+      toast({ title: "Track added" });
+    } catch (e) {
+      toast({ title: e instanceof Error ? e.message : "Could not add track", variant: "destructive" });
+    } finally {
+      setTrackAdding(false);
+    }
+  };
 
-  const submit = () => {
-    if (!myArtist) return;
-    createCollab.mutate(
-      { data: { fromArtistId: myArtist.id, toArtistId: artistId, message: message.trim() || undefined } },
-      {
-        onSuccess: () => {
-          toast({ title: "Collaboration request sent!" });
-          setMessage("");
-          setSent(true);
-          void qc.invalidateQueries();
-        },
-        onError: () => toast({ title: "Could not send request", variant: "destructive" }),
-      },
-    );
+  const handleDeleteTrack = async (trackId: string) => {
+    const token = session?.access_token;
+    if (!token) return;
+    setTrackDeletingId(trackId);
+    try {
+      await fetch(`/api/artists/${artistId}/tracks/${trackId}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      setTracks((prev) => prev.filter((t) => t.id !== trackId));
+      toast({ title: "Track deleted" });
+    } catch {
+      toast({ title: "Could not delete track", variant: "destructive" });
+    } finally {
+      setTrackDeletingId(null);
+    }
   };
 
   const handleRequestStem = async (trackId: string, stemType: string) => {
@@ -214,17 +242,147 @@ function CollabTab({ artistId, artistName }: { artistId: string; artistName: str
     }
   };
 
-  return (
-    <div className="space-y-6 py-6">
-      {/* Tracks section */}
-      {tracks.length > 0 && (
-        <div className="space-y-4">
+  // Collaboration request form (for other artists viewing)
+  const createCollab = useCreateCollaborationRequest();
+  const [message, setMessage] = useState("");
+  const [sent, setSent] = useState(false);
+
+  const submit = () => {
+    if (!myArtist) return;
+    createCollab.mutate(
+      { data: { fromArtistId: myArtist.id, toArtistId: artistId, message: message.trim() || undefined } },
+      {
+        onSuccess: () => {
+          toast({ title: "Collaboration request sent!" });
+          setMessage("");
+          setSent(true);
+          void qc.invalidateQueries();
+        },
+        onError: () => toast({ title: "Could not send request", variant: "destructive" }),
+      },
+    );
+  };
+
+  // Collaborations list (owner only)
+  const { data: collaborations } = useListArtistCollaborations(artistId, {
+    query: { enabled: isOwnProfile, queryKey: getListArtistCollaborationsQueryKey(artistId) },
+  });
+  const updateCollab = useUpdateCollaborationRequest();
+  const invalidateCollabs = () =>
+    qc.invalidateQueries({ queryKey: getListArtistCollaborationsQueryKey(artistId) });
+
+  // ── Owner view ────────────────────────────────────────────────────────────
+  if (isOwnProfile) {
+    return (
+      <div className="space-y-10 py-6">
+
+        {/* My Tracks */}
+        <section className="space-y-4">
+          <div className="flex items-center gap-2">
+            <Music2 className="w-5 h-5 text-primary" />
+            <h3 className="text-xl font-semibold">My Tracks</h3>
+          </div>
+          <p className="text-sm text-muted-foreground -mt-1">
+            Upload up to 3 tracks. Other artists can listen and request AI stem separation.
+          </p>
+          <TrackManager
+            tracks={tracks}
+            adding={trackAdding}
+            deletingId={trackDeletingId}
+            onAdd={handleAddTrack}
+            onDelete={handleDeleteTrack}
+          />
+        </section>
+
+        {/* Stem Requests */}
+        <section className="space-y-4">
           <div className="flex items-center gap-2">
             <Scissors className="w-5 h-5 text-secondary" />
-            <h3 className="text-lg font-semibold">{artistName}'s Tracks</h3>
+            <h3 className="text-xl font-semibold">Stem Requests</h3>
           </div>
-          <p className="text-sm text-muted-foreground">
-            Listen to {artistName}'s tracks. As an artist, you can request AI stem separation to use individual layers in your own productions.
+          <p className="text-sm text-muted-foreground -mt-1">
+            Approve requests from other artists to receive AI-separated stems of your tracks.
+          </p>
+          <StemRequestsPanel artistId={artistId} />
+        </section>
+
+        {/* Collaborations */}
+        <section className="space-y-4">
+          <div className="flex items-center gap-2">
+            <Users className="w-5 h-5 text-secondary" />
+            <h3 className="text-xl font-semibold">Collaborations</h3>
+          </div>
+          {collaborations && collaborations.length > 0 ? (
+            <div className="space-y-3">
+              {collaborations.map((c) => {
+                const incoming = c.toArtistId === artistId;
+                const other = incoming ? c.fromArtistName : c.toArtistName;
+                return (
+                  <div
+                    key={c.id}
+                    className="glass-card rounded-2xl border border-white/10 p-4 flex flex-wrap items-center gap-3"
+                  >
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold truncate">{other}</p>
+                      <p className="text-xs text-muted-foreground capitalize">{c.status}</p>
+                    </div>
+                    {incoming && c.status === "pending" && (
+                      <div className="flex gap-2 shrink-0">
+                        <Button
+                          size="sm"
+                          className="h-8 px-3 text-xs gap-1"
+                          onClick={() =>
+                            updateCollab.mutate(
+                              { id: c.id, data: { status: "accepted" } },
+                              { onSuccess: () => void invalidateCollabs() },
+                            )
+                          }
+                        >
+                          <Check className="w-3 h-3" /> Accept
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-8 px-3 text-xs gap-1"
+                          onClick={() =>
+                            updateCollab.mutate(
+                              { id: c.id, data: { status: "declined" } },
+                              { onSuccess: () => void invalidateCollabs() },
+                            )
+                          }
+                        >
+                          <X className="w-3 h-3" /> Decline
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground italic">
+              No collaboration requests yet. Other artists can send you one from your public profile.
+            </p>
+          )}
+        </section>
+      </div>
+    );
+  }
+
+  // ── Other-artist / public view ────────────────────────────────────────────
+  const canCollab = profile?.role === "artist" && myArtist && myArtist.id !== artistId;
+
+  return (
+    <div className="space-y-8 py-6">
+      {/* Tracks */}
+      {tracks.length > 0 && (
+        <section className="space-y-4">
+          <div className="flex items-center gap-2">
+            <Scissors className="w-5 h-5 text-secondary" />
+            <h3 className="text-xl font-semibold">{artistName}'s Tracks</h3>
+          </div>
+          <p className="text-sm text-muted-foreground -mt-1">
+            Listen and request AI stem separation to use individual layers in your productions.
           </p>
           <div className="space-y-3">
             {tracks.map((track) => (
@@ -239,9 +397,10 @@ function CollabTab({ artistId, artistName }: { artistId: string; artistName: str
               />
             ))}
           </div>
-        </div>
+        </section>
       )}
 
+      {/* Collab request form */}
       <div className="glass-card rounded-2xl p-8">
         <div className="flex items-start gap-4 mb-6">
           <div className="w-12 h-12 rounded-2xl bg-secondary/15 flex items-center justify-center flex-shrink-0">
@@ -255,18 +414,11 @@ function CollabTab({ artistId, artistName }: { artistId: string; artistName: str
           </div>
         </div>
 
-        {isOwnProfile ? (
-          <div className="flex items-center gap-3 p-4 rounded-xl bg-muted/50 text-sm text-muted-foreground">
-            <UserCheck className="w-5 h-5 flex-shrink-0" />
-            This is your own artist profile. Collaboration requests are sent to other artists.
-          </div>
-        ) : !user ? (
+        {!user ? (
           <div className="flex flex-col items-center gap-4 py-6 text-center">
             <Lock className="w-10 h-10 text-muted-foreground/40" />
             <p className="text-muted-foreground text-sm">Sign in to send a collaboration request.</p>
-            <Button asChild>
-              <Link href="/login">Sign in</Link>
-            </Button>
+            <Button asChild><Link href="/login">Sign in</Link></Button>
           </div>
         ) : profile?.role !== "artist" ? (
           <div className="flex items-center gap-3 p-4 rounded-xl bg-muted/50 text-sm text-muted-foreground">
@@ -277,8 +429,7 @@ function CollabTab({ artistId, artistName }: { artistId: string; artistName: str
           <div className="flex items-center gap-3 p-4 rounded-xl bg-muted/50 text-sm text-muted-foreground">
             <Users className="w-5 h-5 flex-shrink-0" />
             Complete your artist profile from the{" "}
-            <Link href="/dashboard" className="text-primary underline">Dashboard</Link>{" "}
-            first.
+            <Link href="/dashboard" className="text-primary underline">Dashboard</Link> first.
           </div>
         ) : sent ? (
           <div className="flex items-center gap-3 p-4 rounded-xl bg-primary/10 border border-primary/20 text-sm">
@@ -288,7 +439,9 @@ function CollabTab({ artistId, artistName }: { artistId: string; artistName: str
         ) : (
           <div className="space-y-4">
             <div className="space-y-1.5">
-              <label className="text-sm font-medium">Message <span className="text-muted-foreground font-normal">(optional)</span></label>
+              <label className="text-sm font-medium">
+                Message <span className="text-muted-foreground font-normal">(optional)</span>
+              </label>
               <Textarea
                 value={message}
                 onChange={(e) => setMessage(e.target.value)}
@@ -315,8 +468,10 @@ function CollabTab({ artistId, artistName }: { artistId: string; artistName: str
 export default function ArtistDetail() {
   const params = useParams();
   const id = params.id as string;
+  const search = useSearch();
+  const initialTab = new URLSearchParams(search).get("tab") === "collab" ? "collab" : "profile";
 
-  const [tab, setTab] = useState<"profile" | "collab">("profile");
+  const [tab, setTab] = useState<"profile" | "collab">(initialTab);
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
 
   const {
@@ -366,7 +521,7 @@ export default function ArtistDetail() {
           {artist.imageUrl ? (
             <img src={artist.imageUrl} alt={artist.artistName} className="w-full h-full object-cover opacity-60" />
           ) : (
-            <div className="w-full h-full bg-gradient-to-r from-primary/20 to-secondary/20" />
+            <div className="w-full h-full bg-primary/15" />
           )}
           <div className="absolute inset-0 bg-gradient-to-t from-background to-transparent" />
         </div>
@@ -583,7 +738,7 @@ export default function ArtistDetail() {
                 </section>
               )}
 
-              <SongstatsPanel spotifyUrl={artist.spotifyUrl} />
+              <SongstatsPanel spotifyUrl={artist.spotifyUrl} artistName={artist.artistName} />
 
               {links.length > 0 && (
                 <section className="glass-card rounded-2xl p-5">

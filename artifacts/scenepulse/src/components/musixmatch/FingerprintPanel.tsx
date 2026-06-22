@@ -99,7 +99,7 @@ export function FingerprintPanel({ open, onClose, onFindOnMap }: Props) {
             <Button
               onClick={search}
               disabled={loading || tooShort || !query.trim()}
-              className="rounded-xl bg-gradient-to-br from-primary to-secondary shrink-0"
+              className="rounded-xl bg-primary text-primary-foreground shrink-0"
               size="icon"
             >
               {loading ? (

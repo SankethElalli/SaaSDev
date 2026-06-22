@@ -8,4 +8,9 @@ router.get("/healthz", (_req, res) => {
   res.json(data);
 });
 
+// Lightweight keep-alive endpoint — ping this every 14 min to prevent Render cold starts
+router.get("/ping", (_req, res) => {
+  res.json({ ok: true, t: Date.now() });
+});
+
 export default router;

@@ -3,7 +3,7 @@ import { useEffect, useRef } from "react";
 
 export default function MapPage() {
   const mapContainer = useRef<HTMLDivElement>(null);
-  const { data: pinsData, isLoading } = useGetMapPins();
+  const { data: pinsData, isLoading } = useGetMapPins({ query: { staleTime: 60_000, gcTime: 5 * 60_000 } });
   
   useEffect(() => {
     if (!import.meta.env.VITE_MAPPLS_KEY) return;

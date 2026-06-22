@@ -31,6 +31,7 @@ export interface LiveEvent {
 interface Props {
   liveEvents?: LiveEvent[];
   newArtistCount?: number;
+  satellite?: boolean;
 }
 
 function formatEventDate(isoDate: string): string {
@@ -95,7 +96,7 @@ function toSceneNotification(
   };
 }
 
-export function NotificationsMenu({ liveEvents = [], newArtistCount = 0 }: Props) {
+export function NotificationsMenu({ liveEvents = [], newArtistCount = 0, satellite }: Props) {
   const [open, setOpen] = useState(false);
   const [sceneReadIds, setSceneReadIds] = useState<Set<string>>(new Set());
   const { notifications: sysNotifs, markRead, markAllRead } = useSystemNotifications();
@@ -167,7 +168,12 @@ export function NotificationsMenu({ liveEvents = [], newArtistCount = 0 }: Props
         <Button
           variant="ghost"
           size="icon"
-          className="group relative h-11 w-11 rounded-2xl glass border border-white/10 transition-all duration-200 hover:border-primary/50 hover:text-primary active:scale-90"
+          className={cn(
+            "group relative h-11 w-11 rounded-2xl border transition-all duration-200 hover:border-primary/50 active:scale-90",
+            satellite
+              ? "glass-satellite text-white/70 hover:text-white"
+              : "glass border-white/10 hover:text-primary",
+          )}
           aria-label="Notifications"
         >
           <Bell className="h-5 w-5 transition-transform duration-200 group-hover:scale-110 group-hover:-rotate-6" />

@@ -241,6 +241,8 @@ router.get("/artists/:id/stem-requests", requireAuth, async (req, res) => {
       requesterArtistId: trackStemRequestsTable.requesterArtistId,
       ownerArtistId: trackStemRequestsTable.ownerArtistId,
       status: trackStemRequestsTable.status,
+      stemType: trackStemRequestsTable.stemType,
+      lalalJobId: trackStemRequestsTable.lalalJobId,
       message: trackStemRequestsTable.message,
       createdAt: trackStemRequestsTable.createdAt,
       updatedAt: trackStemRequestsTable.updatedAt,
@@ -386,6 +388,38 @@ router.get("/stem-requests/:id/stems", requireAuth, async (req, res) => {
     .where(eq(trackStemsTable.stemRequestId, stemRequestId));
 
   res.json(stems);
+});
+
+// GET /stem-requests/:id/debug — shows full status + lalal job id (no auth for dev)
+router.get("/stem-requests/:id/debug", async (req, res) => {
+  const [req_] = await db
+    .select()
+    .from(trackStemRequestsTable)
+    .where(eq(trackStemRequestsTable.id, req.params.id))
+    .limit(1);
+  if (!req_) { res.status(404).json({ error: "Not found" }); return; }
+
+  const stems = await db
+    .select()
+    .from(trackStemsTable)
+    .where(eq(trackStemsTable.stemRequestId, req.params.id));
+
+  res.json({ request: req_, stems, lalalApiKeySet: !!process.env.LALAL_API_KEY });
+});
+
+// GET /debug/lalal — test lalal.ai connectivity
+router.get("/debug/lalal", async (_req, res) => {
+  const key = process.env.LALAL_API_KEY;
+  if (!key) { res.json({ ok: false, error: "LALAL_API_KEY not set" }); return; }
+  try {
+    const r = await fetch("https://www.lalal.ai/api/v1/result/?id=test-ping", {
+      headers: { "X-License-Key": key },
+    });
+    const body = await r.text();
+    res.json({ ok: true, status: r.status, body });
+  } catch (e) {
+    res.json({ ok: false, error: String(e) });
+  }
 });
 
 export default router;

@@ -38,7 +38,7 @@ function eventToPin(e: JbEvent) {
 }
 
 const hasGeo = (e: JbEvent) =>
-  Boolean(e.location?.geo?.latitude && e.location?.geo?.longitude);
+  e.location?.geo?.latitude != null && e.location?.geo?.longitude != null;
 
 // GET /jambase/events/global
 // Aggregated live events from major music hubs worldwide (for Global mode).

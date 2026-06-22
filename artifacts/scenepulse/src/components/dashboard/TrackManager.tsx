@@ -37,7 +37,7 @@ export function TrackManager({ tracks, adding, deletingId, onAdd, onDelete }: Pr
     const file = e.target.files?.[0];
     if (!file) return;
     if (!title.trim()) {
-      setUploadError("Enter a title before uploading.");
+      setUploadError("Enter a title first.");
       return;
     }
     setUploadError(null);
@@ -55,58 +55,26 @@ export function TrackManager({ tracks, adding, deletingId, onAdd, onDelete }: Pr
   };
 
   return (
-    <div className="space-y-4">
-      {/* Track list */}
-      {tracks.length === 0 && (
-        <div className="flex flex-col items-center gap-2 rounded-2xl border border-dashed border-white/10 py-10 text-center">
-          <Music2 className="h-8 w-8 text-white/20" />
-          <p className="text-sm text-muted-foreground">No tracks uploaded yet</p>
-          <p className="text-xs text-muted-foreground/60">Upload up to 3 tracks for other artists to discover</p>
-        </div>
-      )}
-
-      <div className="space-y-3">
-        {tracks.map((track) => (
-          <div
-            key={track.id}
-            className="glass-card rounded-xl border border-white/10 p-4 space-y-2"
-          >
-            <div className="flex items-center justify-between gap-3 min-w-0">
-              <div className="flex items-center gap-2 min-w-0">
-                <Music2 className="h-4 w-4 shrink-0 text-primary" />
-                <span className="text-sm font-medium truncate">{track.title}</span>
-              </div>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8 shrink-0 text-muted-foreground hover:text-destructive"
-                disabled={deletingId === track.id}
-                onClick={() => onDelete(track.id)}
-                aria-label="Delete track"
-              >
-                {deletingId === track.id
-                  ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  : <Trash2 className="h-3.5 w-3.5" />
-                }
-              </Button>
-            </div>
-            {/* Native audio player */}
-            <audio
-              controls
-              src={track.url}
-              className="w-full h-9"
-              preload="metadata"
-            />
+    <div className="space-y-3">
+      {/* Upload card — always first */}
+      {atLimit ? (
+        <div className="flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.02] px-4 py-3">
+          <div className="w-8 h-8 rounded-xl bg-muted/50 flex items-center justify-center shrink-0">
+            <Music2 className="h-4 w-4 text-muted-foreground" />
           </div>
-        ))}
-      </div>
-
-      {/* Upload form */}
-      {!atLimit && (
-        <div className="glass-card rounded-xl border border-white/10 p-4 space-y-3">
-          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            Add track ({tracks.length} / {MAX_TRACKS})
+          <p className="text-sm text-muted-foreground">
+            {MAX_TRACKS} / {MAX_TRACKS} tracks uploaded — delete one to add another.
           </p>
+        </div>
+      ) : (
+        <div className="rounded-2xl border border-dashed border-primary/30 bg-primary/[0.03] p-5 space-y-3">
+          <div className="flex items-center gap-2 mb-1">
+            <Upload className="h-4 w-4 text-primary shrink-0" />
+            <span className="text-sm font-semibold text-primary">Upload a track</span>
+            <span className="ml-auto text-xs text-muted-foreground tabular-nums">
+              {tracks.length} / {MAX_TRACKS}
+            </span>
+          </div>
           <Input
             value={title}
             onChange={(e) => setTitle(e.target.value)}
@@ -125,7 +93,7 @@ export function TrackManager({ tracks, adding, deletingId, onAdd, onDelete }: Pr
             onClick={() => fileRef.current?.click()}
             disabled={busy || !title.trim()}
             className={cn(
-              "w-full rounded-xl bg-gradient-to-br from-primary to-secondary gap-2",
+              "w-full rounded-xl bg-primary text-primary-foreground gap-2",
               busy && "opacity-60",
             )}
           >
@@ -140,9 +108,43 @@ export function TrackManager({ tracks, adding, deletingId, onAdd, onDelete }: Pr
         </div>
       )}
 
-      {atLimit && (
-        <p className="text-center text-xs text-muted-foreground">
-          Maximum {MAX_TRACKS} tracks reached. Delete one to upload another.
+      {/* Track cards — one by one as uploaded */}
+      {tracks.map((track) => (
+        <div
+          key={track.id}
+          className="glass-card rounded-2xl border border-white/10 p-4 space-y-3"
+        >
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
+              <Music2 className="h-4 w-4 text-primary" />
+            </div>
+            <span className="text-sm font-semibold flex-1 truncate">{track.title}</span>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 shrink-0 text-muted-foreground hover:text-destructive"
+              disabled={deletingId === track.id}
+              onClick={() => onDelete(track.id)}
+              aria-label="Delete track"
+            >
+              {deletingId === track.id
+                ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                : <Trash2 className="h-3.5 w-3.5" />
+              }
+            </Button>
+          </div>
+          <audio
+            controls
+            src={track.url}
+            className="w-full h-9"
+            preload="metadata"
+          />
+        </div>
+      ))}
+
+      {tracks.length === 0 && !atLimit && (
+        <p className="text-center text-xs text-muted-foreground/60 py-2">
+          No tracks yet — upload your first track above.
         </p>
       )}
     </div>
@@ -179,12 +181,12 @@ export function PublicTrackCard({
   const [stemType, setStemType] = useState("vocals");
 
   return (
-    <div className="glass-card rounded-xl border border-white/10 p-4 space-y-2">
-      <div className="flex items-center justify-between gap-3 min-w-0">
-        <div className="flex items-center gap-2 min-w-0">
-          <Music2 className="h-4 w-4 shrink-0 text-primary" />
-          <span className="text-sm font-medium truncate">{track.title}</span>
+    <div className="glass-card rounded-2xl border border-white/10 p-4 space-y-3">
+      <div className="flex items-center gap-3 min-w-0">
+        <div className="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
+          <Music2 className="h-4 w-4 text-primary" />
         </div>
+        <span className="text-sm font-semibold flex-1 truncate">{track.title}</span>
         {canRequest && !picking && !requested && (
           <Button
             size="sm"
@@ -204,7 +206,6 @@ export function PublicTrackCard({
         )}
       </div>
 
-      {/* Stem picker — expands inline when "Request Stem" is clicked */}
       {picking && !requested && (
         <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-white/10">
           <Scissors className="h-3.5 w-3.5 text-muted-foreground shrink-0" />

@@ -93,7 +93,15 @@ router.get("/map/pins", async (req, res) => {
   // frontend decides what to display based on the toggle / viewport)
   const [artists, venues, events] = await Promise.all([
     db
-      .select()
+      .select({
+        id: artistsTable.id,
+        artistName: artistsTable.artistName,
+        latitude: artistsTable.latitude,
+        longitude: artistsTable.longitude,
+        city: artistsTable.city,
+        imageUrl: artistsTable.imageUrl,
+        spotifyUrl: artistsTable.spotifyUrl,
+      })
       .from(artistsTable)
       .where(
         and(
@@ -102,7 +110,14 @@ router.get("/map/pins", async (req, res) => {
         ),
       ),
     db
-      .select()
+      .select({
+        id: venuesTable.id,
+        name: venuesTable.name,
+        latitude: venuesTable.latitude,
+        longitude: venuesTable.longitude,
+        city: venuesTable.city,
+        imageUrl: venuesTable.imageUrl,
+      })
       .from(venuesTable)
       .where(
         and(isNotNull(venuesTable.latitude), isNotNull(venuesTable.longitude)),
@@ -154,6 +169,7 @@ router.get("/map/pins", async (req, res) => {
     })),
   ];
 
+  res.setHeader("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
   res.json({ pins });
 });
 
@@ -167,6 +183,9 @@ router.get("/map/heatmap", async (_req, res) => {
       artistName: artistsTable.artistName,
       latitude: artistsTable.latitude,
       longitude: artistsTable.longitude,
+      city: artistsTable.city,
+      imageUrl: artistsTable.imageUrl,
+      genres: artistsTable.genres,
       spotifyUrl: artistsTable.spotifyUrl,
       verified: artistsTable.verified,
     })
@@ -190,7 +209,13 @@ router.get("/map/heatmap", async (_req, res) => {
   const withTimeout = <T>(p: Promise<T>, ms: number): Promise<T | null> =>
     Promise.race([p, new Promise<null>((r) => setTimeout(() => r(null), ms))]);
 
-  type HeatResult = { lat: number; lng: number; traction: number; artistId: string; artistName: string; hasSpotify: boolean };
+  type HeatResult = {
+    lat: number; lng: number; traction: number;
+    artistId: string; artistName: string;
+    city: string | null; imageUrl: string | null;
+    genre: string | null; spotifyUrl: string | null;
+    monthlyListeners: number | null;
+  };
 
   // Worker-pool: at most 10 Songstats calls in-flight at once so a large artist
   // roster doesn't open hundreds of simultaneous connections.
@@ -206,10 +231,12 @@ router.get("/map/heatmap", async (_req, res) => {
       // All artists here have a spotifyUrl; use 0.2 as the floor while
       // Songstats data is unavailable or the artist is very small.
       let traction = 0.2;
+      let monthlyListeners: number | null = null;
       if (spotifyId) {
         try {
           const stats = await withTimeout(fetchArtistStats(spotifyId), 5000);
           if (stats?.monthlyListeners != null && stats.monthlyListeners > 0) {
+            monthlyListeners = stats.monthlyListeners;
             traction = Math.min(1.0, 0.1 + (stats.monthlyListeners / 10_000_000) * 0.9);
           }
         } catch { /* keep floor traction */ }
@@ -220,7 +247,11 @@ router.get("/map/heatmap", async (_req, res) => {
         traction,
         artistId: a.id,
         artistName: a.artistName,
-        hasSpotify: !!spotifyId,
+        city: a.city ?? null,
+        imageUrl: a.imageUrl ?? null,
+        genre: a.genres?.[0] ?? null,
+        spotifyUrl: a.spotifyUrl ?? null,
+        monthlyListeners,
       };
     }
   }
