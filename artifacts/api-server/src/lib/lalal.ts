@@ -28,7 +28,7 @@ async function uploadBinary(audioUrl: string, trackTitle: string): Promise<strin
   logger.info({ bytes: buffer.byteLength }, "Audio downloaded, uploading to lalal.ai");
 
   const filename = trackTitle.replace(/[^a-zA-Z0-9_-]/g, "_") + ".mp3";
-  const res = await fetch(`${BASE}/upload/`, {
+  const res = await fetch(`${BASE}/upload`, {
     method: "POST",
     headers: {
       "Content-Type": "application/octet-stream",
@@ -49,7 +49,7 @@ async function uploadBinary(audioUrl: string, trackTitle: string): Promise<strin
 }
 
 async function split(id: string, stem: string, splitter: string): Promise<void> {
-  const res = await fetch(`${BASE}/split/`, {
+  const res = await fetch(`${BASE}/split`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -63,7 +63,7 @@ async function split(id: string, stem: string, splitter: string): Promise<void> 
 }
 
 async function getResult(id: string): Promise<LalalResult> {
-  const res = await fetch(`${BASE}/result/?id=${encodeURIComponent(id)}`, {
+  const res = await fetch(`${BASE}/result?id=${encodeURIComponent(id)}`, {
     headers: { "X-License-Key": apiKey() },
   });
   if (!res.ok) {
@@ -143,8 +143,13 @@ export async function processStemsBackground(
       .set({ lalalJobId: lalalId, updatedAt: new Date() })
       .where(eq(trackStemRequestsTable.id, stemRequestId));
 
+    // Normalize stem type to lalal.ai's expected values
+    // "instrumental" → request "vocals" split (back_track is the instrumental)
+    // "drums" → lalal.ai uses singular "drum"
+    const lalalStem = stemType === "instrumental" ? "vocals" : stemType === "drums" ? "drum" : stemType;
+
     // Start split
-    await split(lalalId, stemType, splitter);
+    await split(lalalId, lalalStem, splitter);
     logger.info({ stemRequestId, lalalId }, "Split started");
 
     // Poll until done
